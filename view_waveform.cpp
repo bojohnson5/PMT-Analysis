@@ -1,7 +1,7 @@
 // Plot a specified waveform from a ROOT file
 
-void view_waveform(TString file, int num_waveform) {
-	TFile* f = new TFile(file);
+void view_waveform(string file, int num_waveform) {
+	TFile* f = new TFile(file.c_str());
 	TTree* t = (TTree*)f->Get("waveformTree");
 	
 	if (t == nullptr) {
@@ -29,8 +29,9 @@ void view_waveform(TString file, int num_waveform) {
 	TGraph* gr = new TGraph(waveform_size, x, y);
 	gr->GetXaxis()->SetTitle("Time [ns]");
 	gr->GetYaxis()->SetTitle("ADC");
+  file.resize(file.size() - 5);
 	stringstream ss;
-	ss << "Waveform " << num_waveform;
+	ss << "Run " << file << " Waveform " << num_waveform;
 	gr->SetTitle(ss.str().c_str());
 	gr->Draw();
 }

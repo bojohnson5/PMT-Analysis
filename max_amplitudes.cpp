@@ -1,5 +1,5 @@
-void max_amplitudes(TString file) {
-	TFile* f = new TFile(file);
+void max_amplitudes(string file) {
+	TFile* f = new TFile(file.c_str());
 	TTree* t = (TTree*)f->Get("waveformTree");
 	
 	if (t == nullptr) {
@@ -14,8 +14,11 @@ void max_amplitudes(TString file) {
 	t->SetBranchAddress("waveform", &waveform);
 	t->SetBranchAddress("baseline", &baseline);
 	t->SetBranchAddress("polarity", &polarity);
+
+  file.resize(file.size() - 5);
+  string title = "Run " + file + " max amplitues;ADC;Counts";
 	
-	TH1D* h = new TH1D("h", "Maximum Amplitudes", 100, 0, 1000);
+	TH1D* h = new TH1D("h", title.c_str(), 100, 0, 1000);
 	double max_amp = 0;
 	double amp = 0;
 	int total_entries = t->GetEntries();

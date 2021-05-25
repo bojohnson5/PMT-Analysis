@@ -26,15 +26,17 @@ void view_spectrum(string file, Int_t st = 0,
 
   string ext = ".root";
   file.resize(file.size() - ext.size());
-  string title = "Run " + file;
+  stringstream ss;
+  ss << "Run " << file << " int. window " << st << "-" << en;
 	Int_t window_size = accum_en - accum_st + 1;
 	Int_t num_ent = t->GetEntries();
 	Double_t up_time = waveform->size() * 4.0 * num_ent;
 	up_time /= 1e9;
 
-	TH1D* hist = new TH1D("hist", title.c_str(),
+	TH1D* hist = new TH1D("hist", ss.str().c_str(),
 				num_bins, -1000, 3000);
   hist->GetXaxis()->SetTitle("Integrated ADC");
+  hist->GetYaxis()->SetTitle("Counts");
 
 	if (use_accum) {
 		for (Int_t i = 0; i < num_ent; i++) {
