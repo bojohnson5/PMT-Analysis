@@ -16,7 +16,7 @@ void max_amplitudes(string file) {
 	t->SetBranchAddress("polarity", &polarity);
 
   file.resize(file.size() - 5);
-  string title = "Run " + file + " max amplitues;ADC;Counts";
+  string title = "Run " + file + " max amplitudes;ADC;Counts";
 	
 	TH1D* h = new TH1D("h", title.c_str(), 100, 0, 1000);
 	double max_amp = 0;
