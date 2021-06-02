@@ -73,9 +73,9 @@ void anaylsis(string file, Double_t wind_st, Double_t wind_en,
   ss << "P/V: " << peak_valley.pv;
   res->AddText(ss.str().c_str());
   ss.str("");
-  ss << "P/V (0.3SPE): " << peak_valley.pv03;
-  res->AddText(ss.str().c_str());
-  ss.str("");
+  // ss << "P/V (0.3SPE): " << peak_valley.pv03;
+  // res->AddText(ss.str().c_str());
+  // ss.str("");
   ss << "Resolution: " << photo_elec.res;
   res->AddText(ss.str().c_str());
   ss.str("");

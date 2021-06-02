@@ -7,7 +7,7 @@ import awkward as ak
 import uproot
 
 from scipy.optimize import curve_fit
-from fit_funcs import deap_expo, deap_gamma, deap_ped, spe
+from fit_funcs import deap_expo, deap_gamma, deap_ped, spe, ped_spe
 
 class Rooter:
     """
@@ -45,7 +45,7 @@ class Rooter:
         plt.title('Run ' + self.fi[0:2] + ' Waveform ' + str(num))
         plt.show()
 
-    def max_amplitudes(self, n_bins=150, view_wind=(0, 2000)):
+    def view_max_amplitudes(self, n_bins=150, view_wind=(0, 2000)):
         """
         Histogram the maximum amplitudes from waveforms
 
@@ -130,7 +130,7 @@ class Rooter:
         plt.show()
 
     def fit_spectrum(self, wind, funcs, bounds, p0s, n_bins=150, view_wind=(-200, 4000),
-                     y_log=False, print_res=False):
+                     y_log=False, print_res=False, view=True, convolve=False):
         """
         Fit a spectrum with a given function(s) over a specified range(s)
 
@@ -154,20 +154,24 @@ class Rooter:
         hist, bin_b = np.histogram(spec, bins=n_bins)
         bin_w = np.diff(bin_b)
         bin_c = bin_b[:-1] + bin_w / 2
-        plt.hist(spec[(spec > view_wind[0]) * (spec < view_wind[1])],
-                 bins=n_bins, histtype='step', label='Int. wind. ' + str(wind[0] * 4)
-                 + '-' + str(wind[1] * 4))
 
         fit_num = 1
         params = []
+        x = np.linspace(view_wind[0], view_wind[1], 1000)
+        ys = []
         for func, bound, p0 in zip(funcs, bounds, p0s):
             x_fit = bin_c[(bin_c > bound[0]) * (bin_c < bound[1])]
             y_fit = hist[(bin_c > bound[0]) * (bin_c < bound[1])]
             popt, _ = curve_fit(func, x_fit, y_fit, p0=p0)
             params.append(popt)
-            x = np.linspace(view_wind[0], view_wind[1], 1000)
+            print(popt, flush=True)
             y = func(x, *popt)
-            plt.plot(x[y > 1e-2], y[y > 1e-2], '--', label='fit ' + str(fit_num))
+            ys.append(y)
+            if view:
+                max_val = np.max(np.array(ys))
+                print(max_val)
+                plt.plot(x[(y > 1) * (y < 2000)], y[(y > 1) * (y < 2000)], 
+                         '--', label='fit ' + str(fit_num))
             fit_num += 1
         if print_res:
             adj_mean = params[1][1] - params[0][1]
@@ -175,63 +179,43 @@ class Rooter:
             max_i = np.argmax(hist)
             peak_offset = 5
             peak_i = np.argmax(hist[max_i + peak_offset:])
+            peak_i = max_i + peak_offset + peak_i
             min_i = np.argmin(hist[max_i:peak_i])
-            pv = hist[max_i + peak_offset:][peak_i] / hist[max_i:peak_i][min_i]
-            pv_3 = hist[max_i + peak_offset:][peak_i] / \
-                hist[self._find_nearest(bin_c, adj_mean * 0.3)]
-            plt.text(1000, 1500, f'P/V: {pv:.2f}\nP/V (0.3PE): {pv_3:.2f}\nRes: '
+            min_i = max_i + min_i
+            pv = hist[peak_i] / hist[min_i]
+            plt.text(1000, 1500, f'P/V: {pv:.2f}\nRes: '
                                  f'{res:.2f}\nSPE Peak: {adj_mean:.2f}')
         if y_log:
             plt.yscale('log')
+        if view:
+            plt.hist(spec[(spec > view_wind[0]) * (spec < view_wind[1])],
+                     bins=n_bins, histtype='step', label='Int. wind. ' + str(wind[0] * 4)
+                     + '-' + str(wind[1] * 4))
+            plt.legend()
+            plt.xlabel('Integrated ADC', loc='right')
+            plt.ylabel('Count', loc='top')
+            plt.title('Run ' + self.fi[0:2] + ' Spectrum and Fits')
+            plt.show()
+        if convolve:
+            self._convolve_fits(spec, x, ys)
+
+    def _convolve_fits(self, hist, x, ys):
+        plt.hist(hist, bins=150, histtype='step', label='Spectrum')
+        ped = ys[0]
+        spe = np.nan_to_num(ys[1])
+        win = ped[50:115]
+        conv1 = np.convolve(spe, win, 'same') / np.sum(win)
+        conv2 = np.convolve(spe, spe, 'same') / np.sum(spe)
+        conv3 = np.convolve(conv2, win, 'same') / np.sum(win)
+        #  plt.plot(x, conv1, label='conv1')
+        plt.plot(x, ped + conv1, label='Full model')
+        #  plt.plot(x, conv3, label='conv2')
+        plt.xlabel('Integrated ADC', loc='right')
+        plt.ylabel('Counts', loc='top')
+        plt.semilogy()
+        plt.title('Run ' + self.fi[0:2] + ' Spectrum and DEAP Fit')
+        plt.ylim(bottom=10)
         plt.legend()
-        plt.xlabel('Integrated ADC', loc='right')
-        plt.ylabel('Count', loc='top')
-        plt.title('Run ' + self.fi[0:2] + ' Spectrum and Fits')
-        plt.show()
-
-    def deap_fit_spectrum(self, wind, funcs, bounds, p0s, n_bins=150, view_wind=(-200, 4000), 
-                          y_log=False):
-        """
-        Fit a spectrum with a given function(s) over a specified range(s)
-
-        Parameters
-        ----------
-            wind : tuple of ints
-                Where to stop and start the integration window, as indicies not times
-            funcs : list of functions
-                Functions that will be fitted over specified range
-            bounds : list of tuples
-                Range where the associated function should be fitted to
-            p0s: list of lists
-                Initial paramter guesses for fits
-            n_bins : int, optional
-                Number of histogram bins
-            view_wind : tuple of ints, optional
-                Viewing window for histogram
-        """
-        spec = np.apply_along_axis(np.sum, 1, self.w[:, wind[0]:wind[1] + 1])
-        spec = spec[(spec > view_wind[0]) * (spec < view_wind[1])]
-        hist, bin_b = np.histogram(spec, bins=n_bins)
-        bin_w = np.diff(bin_b)
-        bin_c = bin_b[:-1] + bin_w / 2
-        plt.bar(bin_c, hist, width=bin_w, label='hist', color='k', alpha=0.5)
-
-        fit_num = 1
-        params = []
-        for func, bound, p0 in zip(funcs, bounds, p0s):
-            x_fit = bin_c[(bin_c > bound[0]) * (bin_c < bound[1])]
-            y_fit = hist[(bin_c > bound[0]) * (bin_c < bound[1])]
-            popt, _ = curve_fit(func, x_fit, y_fit, p0=p0)
-            params.append(popt)
-            x = np.linspace(view_wind[0], view_wind[1], 1000)
-            y = func(x, *popt)
-            plt.plot(x, y, '--', label='fit ' + str(fit_num))
-            fit_num += 1
-        plt.xlabel('Integrated ADC', loc='right')
-        plt.ylabel('Count', loc='top')
-        plt.title('Run ' + self.fi[0:2] + ' Spectrum and Fits')
-        if y_log:
-            plt.yscale('log')
         plt.show()
 
     def _find_nearest(self, array, value):
@@ -305,18 +289,9 @@ class Rooter:
 
 if __name__ == '__main__':
     r = Rooter('12.root')
-    r.max_amplitudes()
-    #  r.view_waveform(i)
-    #  r.view_spectrum((160, 170), y_log=True)
-    #  r.deap_fit_spectrum((160, 170), [spe_fit], [(-200, 4000)],
-                   #  [[2000, 0, 50, 200, 50, 50, 100, 10, 10, 10, 1]], y_log=True)
-    #  r.view_multi_spec([(160, 170), (150, 180), (162, 175)], n_bins=100)
-    #  r.fit_spectrum((160, 170), [deap_ped, deap_gamma],
-                   #  [(-200, 200), (500, 1000)],
-                   #  [[2000, 0, 50], [400, 10, 5]],
-                   #  y_log=True)
-    #  r.fit_spectrum((160, 170), [gaussian, gaussian],
-                   #  [(-200, 200), (500, 900)], [[2000, 0, 50], [200, 500, 100]])
-    spe_adc = 187.5
-    r.pre_post_pulsing(spe_adc, 0.3 * spe_adc, (2, 23), (6, 37), (37, 6250))
-    #  r.gain((160, 170))
+    r.fit_spectrum((162, 175), [deap_ped, spe],
+                   [(-200, 200), (0, 900)],
+                   [[6.7e4, -20, 25], [9e4, 8.8e2, 8e-2, 1e5, 1.43, 7.14, 2.2e-1, 0.02, 500]],
+                   y_log=True, view_wind=(-200, 2000), view=False, convolve=True)
+    #  spe_adc = 187.5
+    #  r.pre_post_pulsing(spe_adc, 0.3 * spe_adc, (2, 23), (6, 37), (37, 6250))
