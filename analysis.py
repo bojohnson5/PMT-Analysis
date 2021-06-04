@@ -5,9 +5,12 @@ import numpy as np
 import matplotlib.pyplot as plt
 import awkward as ak
 import uproot
+import copy
 
 from scipy.optimize import curve_fit
 from fit_funcs import deap_expo, deap_gamma, deap_ped, spe, ped_spe
+
+from sklearn.cluster import KMeans
 
 class Rooter:
     """
@@ -21,13 +24,28 @@ class Rooter:
             Contains the waveforms as a 2d array as numpy arrays
     """
 
-    def __init__(self, fi):
+    def __init__(self, fi, thre, filt=True):
+        """
+        Parameters
+        ----------
+            fi : string
+                File name used for the analysis
+            thre : float
+                SPE threshold value
+            filt : bool, optional
+                Use waveforms filtered for noisiness in the analysis
+        """
         with uproot.open(fi + ':waveformTree') as tree:
             waveforms = tree['waveform'].array()
             baselines = tree['baseline'].array()
             polarity = tree['polarity'].array()
             self.w = ak.to_numpy((waveforms - baselines) * polarity)
             self.fi = fi
+            self.thre = thre
+            if filt:
+                self.w = self._cut_noise(self.thre)
+            else:
+                self.filt_w = self._cut_noise(self.thre)
 
     def view_waveform(self, num):
         """
@@ -76,6 +94,8 @@ class Rooter:
                 Number of histogram bins
             view_wind : tuple of ints, optional
                 Viewing window for histogram
+            y_log : bool, optional
+                Plot y axis with log scale
         """
         spec = np.apply_along_axis(np.sum, 1, self.w[:, wind[0]:wind[1] + 1])
         plt.hist(spec[(spec > view_wind[0]) * (spec < view_wind[1])],
@@ -92,7 +112,7 @@ class Rooter:
     def gain(self, wind):
         """
         Calculate the gain of the PMT as an average of all waveform integrated currents
-        
+
         Parameters
         ----------
             wind : tuple of ints
@@ -148,6 +168,14 @@ class Rooter:
                 Number of histogram bins
             view_wind : tuple of ints, optional
                 Viewing window for histogram
+            y_log : bool, optional
+                If y axis should be log
+            print_res : bool, optional
+                Print calculation results on figure
+            view : bool, optional
+                Plot the fits and histogram
+            convolve : bool, optional
+                Convolve fits and plot them
         """
         spec = np.apply_along_axis(np.sum, 1, self.w[:, wind[0]:wind[1] + 1])
         spec = spec[(spec > view_wind[0]) * (spec < view_wind[1])]
@@ -164,13 +192,10 @@ class Rooter:
             y_fit = hist[(bin_c > bound[0]) * (bin_c < bound[1])]
             popt, _ = curve_fit(func, x_fit, y_fit, p0=p0)
             params.append(popt)
-            print(popt, flush=True)
             y = func(x, *popt)
             ys.append(y)
             if view:
-                max_val = np.max(np.array(ys))
-                print(max_val)
-                plt.plot(x[(y > 1) * (y < 2000)], y[(y > 1) * (y < 2000)], 
+                plt.plot(x[(y > 1) * (y < 2000)], y[(y > 1) * (y < 2000)],
                          '--', label='fit ' + str(fit_num))
             fit_num += 1
         if print_res:
@@ -200,31 +225,77 @@ class Rooter:
             self._convolve_fits(spec, x, ys)
 
     def _convolve_fits(self, hist, x, ys):
+        """
+        Convolve the pedestal with spe function fits from paper 'In-situ characterization of the
+        Hamamatsu R5912-HQE photomultiplier tubes used in the DEAP-3600 experiment'
+
+        Parameters
+        ----------
+            hist : array
+                The histogram values the fit functions are fitting
+            x : array
+                The x range to plot
+            ys : list of arrays
+                the y values from the fits for pedestal and spe
+        """
         plt.hist(hist, bins=150, histtype='step', label='Spectrum')
         ped = ys[0]
         spe = np.nan_to_num(ys[1])
         win = ped[50:115]
         conv1 = np.convolve(spe, win, 'same') / np.sum(win)
-        conv2 = np.convolve(spe, spe, 'same') / np.sum(spe)
-        conv3 = np.convolve(conv2, win, 'same') / np.sum(win)
-        #  plt.plot(x, conv1, label='conv1')
+        conv1 = self._pad_array_left(conv1, ped)
         plt.plot(x, ped + conv1, label='Full model')
-        #  plt.plot(x, conv3, label='conv2')
         plt.xlabel('Integrated ADC', loc='right')
         plt.ylabel('Counts', loc='top')
         plt.semilogy()
         plt.title('Run ' + self.fi[0:2] + ' Spectrum and DEAP Fit')
-        plt.ylim(bottom=10)
+        plt.ylim(bottom=10, top=2000)
         plt.legend()
         plt.show()
 
+    def _pad_array_left(self, array, array_ref):
+        """
+        Pad an array to the left with zeros to match the length of another array
+
+        Parameters
+        ----------
+            array : array
+                Array to pad
+            array_ref : array
+                Array for which the length of parameter array should match
+
+        Returns
+        -------
+            res : array
+                A copy of array with zeros padded on the left to match
+                the length of array_ref
+        """
+        len1 = array.shape[0]
+        len2 = array_ref.shape[0]
+        res = np.zeros(array_ref.shape)
+        res[len2 - len1:] = array
+        return res
+
     def _find_nearest(self, array, value):
-        """Return index of array which is closest to value"""
+        """
+        Return index of array which is closest to value
+
+        Parameters
+        ----------
+            array : array
+                Array to find the index of value in
+            value : float
+                The value to find in array, or closest to it
+
+        Returns
+        -------
+            Index value of array with entry closest to value
+        """
         return np.argmin(np.abs(array - value))
 
     def pre_post_pulsing(self, spe_thre, pulse_thre, pre_wind, late_wind, after_wind):
         """
-        Fit a spectrum with a given function(s) over a specified range(s)
+        Calculate the pre-, late-, and after-pulsing percentages
 
         Parameters
         ----------
@@ -245,6 +316,7 @@ class Rooter:
         after = 0
         i = 0
         for waveform in self.w:
+        #  for waveform in self.filt_w:
             x = np.arange(0, len(waveform))
             w = waveform - spe_thre
             cross = x[1:][w[1:] * w[:-1] < 0]
@@ -283,15 +355,48 @@ class Rooter:
         w = waveform - thre
         cross = x[1:][w[1:] * w[:-1] < 0]
         count += len(cross) // 2
-
         return count
+
+    def _cut_noise(self, thre):
+        """
+        Remove noisy waveforms
+
+        Parameters
+        ----------
+            thre : float
+                SPE threshold value
+
+        Returns
+        -------
+            2d array of waveforms
+        """
+        filt_w = copy.deepcopy(self.w)
+        to_delete = []
+        for i in range(len(filt_w)):
+            peak = np.max(filt_w[i])
+            if peak > thre:
+                w = filt_w[i] - thre
+                cross = w[1:] * w[:-1] < 0
+                idx = np.where(cross == True)
+                main_st = idx[0][0]
+                main_en = idx[0][1]
+                pre = filt_w[i][:main_st - 1] + 15
+                post = filt_w[i][main_en + 2:] + 15
+                pre_cross = pre[1:][pre[1:] * pre[:-1] < 0]
+                post_cross = post[1:][post[1:] * post[:-1] < 0]
+                len_pre = len(pre_cross)
+                len_post = len(post_cross)
+                if len_pre // 2 > 3 or len_post // 2 > 3:
+                    to_delete.append(i)
+        return np.delete(filt_w, to_delete, axis=0)
 
 
 if __name__ == '__main__':
-    r = Rooter('12.root')
+    r = Rooter('12.root', 187.5, filt=True)
+    #  r.view_max_amplitudes()
+    #  r.gain((160, 170))
+    #  r.view_spectrum((162, 175), y_log=True)
     r.fit_spectrum((162, 175), [deap_ped, spe],
                    [(-200, 200), (0, 900)],
                    [[6.7e4, -20, 25], [9e4, 8.8e2, 8e-2, 1e5, 1.43, 7.14, 2.2e-1, 0.02, 500]],
                    y_log=True, view_wind=(-200, 2000), view=False, convolve=True)
-    #  spe_adc = 187.5
-    #  r.pre_post_pulsing(spe_adc, 0.3 * spe_adc, (2, 23), (6, 37), (37, 6250))
