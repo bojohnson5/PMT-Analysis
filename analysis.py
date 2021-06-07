@@ -10,7 +10,10 @@ import copy
 from scipy.optimize import curve_fit
 from fit_funcs import deap_expo, deap_gamma, deap_ped, spe, ped_spe
 
-from sklearn.cluster import KMeans
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.ensemble import GradientBoostingClassifier as gbc
+from sklearn.metrics import accuracy_score
+from sklearn.metrics import confusion_matrix
 
 class Rooter:
     """
@@ -316,7 +319,6 @@ class Rooter:
         after = 0
         i = 0
         for waveform in self.w:
-        #  for waveform in self.filt_w:
             x = np.arange(0, len(waveform))
             w = waveform - spe_thre
             cross = x[1:][w[1:] * w[:-1] < 0]
@@ -332,9 +334,15 @@ class Rooter:
                 new_pre = self._count_pulses(waveform[pre_s:pre_e], pulse_thre)
                 new_late = self._count_pulses(waveform[late_s:late_e], pulse_thre)
                 new_after = self._count_pulses(waveform[after_s:after_e], pulse_thre)
+                if i < 5550 and (new_pre > 1 or new_late > 1 or new_after > 1):
+                    plt.plot(waveform)
+                    plt.axhline(spe_thre, c='r', ls='--')
+                    plt.axhline(pulse_thre, c='r', ls='-.')
+                    plt.show()
                 pre += new_pre
                 late += new_late
                 after += new_after
+            i += 1
         print(f'Pre-Pulsing: {pre / spe * 100 : .2f}%')
         print(f'Late-Pulsing: {late / spe * 100 : .2f}%')
         print(f'After-Pulsing: {after / spe * 100 : .2f}%')
@@ -390,13 +398,97 @@ class Rooter:
                     to_delete.append(i)
         return np.delete(filt_w, to_delete, axis=0)
 
+    def post_pulse_hist(self, spe_thre, pulse_thre):
+        hist = np.array([])
+        for waveform in self.w:
+            x = np.arange(0, len(waveform))
+            w = waveform - spe_thre
+            if len(x[w > 0]) > 1:
+                st_i = x[w > 0][1]
+            elif len(x[w > 0]) == 1:
+                st_i = x[w > 0][0]
+            else:
+                continue
+            late_st = 25 // 4
+            st = st_i + late_st
+            w = w[st:]
+            w = w - pulse_thre
+            x = (x[st:] - st) * 4
+            pulses = x[w > 0]
+            #  pulses = np.delete(pulses, [i for i in range(len(pulses)) if i % 2 != 0])
+            if pulses.size != 0:
+                hist = np.append(hist, pulses)
+        plt.hist(hist, bins=10, histtype='step')
+        plt.show()
 
 if __name__ == '__main__':
-    r = Rooter('12.root', 187.5, filt=True)
+    thre = 187.5
+    r = Rooter('12.root', thre, filt=True)
     #  r.view_max_amplitudes()
     #  r.gain((160, 170))
     #  r.view_spectrum((162, 175), y_log=True)
-    r.fit_spectrum((162, 175), [deap_ped, spe],
-                   [(-200, 200), (0, 900)],
-                   [[6.7e4, -20, 25], [9e4, 8.8e2, 8e-2, 1e5, 1.43, 7.14, 2.2e-1, 0.02, 500]],
-                   y_log=True, view_wind=(-200, 2000), view=False, convolve=True)
+    #  r.fit_spectrum((162, 175), [deap_ped, spe],
+                   #  [(-200, 200), (0, 900)],
+                   #  [[6.7e4, -20, 25], [9e4, 8.8e2, 8e-2, 1e5, 1.43, 7.14, 2.2e-1, 0.02, 500]],
+                   #  y_log=True, view_wind=(-200, 2000), view=False, convolve=True)
+    #  r.pre_post_pulsing(thre, thre * 0.3, (2, 23), (6, 38), (38, 6250))
+    r.post_pulse_hist(thre, thre * 0.3)
+    #  #  Classification of waveforms using scikit-learn
+    #  #  use with filtering turned off
+    #  data = r.w
+    #  x_train = data[:10000]
+    #  y_train = []
+    #  for i in range(len(x_train)):
+        #  peak = np.max(x_train[i])
+        #  if peak > thre:
+            #  w = x_train[i] - thre
+            #  cross = w[1:] * w[:-1] < 0
+            #  idx = np.where(cross == True)
+            #  main_st = idx[0][0]
+            #  main_en = idx[0][1]
+            #  pre = x_train[i][:main_st - 1] + 15
+            #  post = x_train[i][main_en + 2:] + 15
+            #  pre_cross = pre[1:][pre[1:] * pre[:-1] < 0]
+            #  post_cross = post[1:][post[1:] * post[:-1] < 0]
+            #  len_pre = len(pre_cross)
+            #  len_post = len(post_cross)
+            #  if len_pre // 2 > 3 or len_post // 2 > 3:
+                #  y_train.append(0)
+            #  else:
+                #  y_train.append(1)
+        #  else:
+            #  y_train.append(2)
+    #  x_test = data[10000:]
+    #  y_test = []
+    #  for i in range(len(x_test)):
+        #  peak = np.max(x_test[i])
+        #  if peak > thre:
+            #  w = x_test[i] - thre
+            #  cross = w[1:] * w[:-1] < 0
+            #  idx = np.where(cross == True)
+            #  main_st = idx[0][0]
+            #  main_en = idx[0][1]
+            #  pre = x_test[i][:main_st - 1] + 15
+            #  post = x_test[i][main_en + 2:] + 15
+            #  pre_cross = pre[1:][pre[1:] * pre[:-1] < 0]
+            #  post_cross = post[1:][post[1:] * post[:-1] < 0]
+            #  len_pre = len(pre_cross)
+            #  len_post = len(post_cross)
+            #  if len_pre // 2 > 3 or len_post // 2 > 3:
+                #  y_test.append(0)
+            #  else:
+                #  y_test.append(1)
+        #  else:
+            #  y_test.append(2)
+    #  classifier = RandomForestClassifier()
+    #  model = classifier.fit(x_train, y_train)
+    #  pred = model.predict(x_test)
+    #  print('Random Forest')
+    #  print(' accuracy = ', accuracy_score(y_test, pred))
+    #  print(confusion_matrix(y_test, pred))
+    #  classifier = gbc()
+    #  model = classifier.fit(x_train, y_train)
+    #  pred = model.predict(x_test)
+    #  print('Gradient Boosting')
+    #  print(' accuracy = ', accuracy_score(y_test, pred))
+    #  print(confusion_matrix(y_test, pred))
