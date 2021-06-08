@@ -42,6 +42,7 @@ class Rooter:
             waveforms = tree['waveform'].array()
             baselines = tree['baseline'].array()
             polarity = tree['polarity'].array()
+            self.raw_w = ak.to_numpy(waveforms)
             self.w = ak.to_numpy((waveforms - baselines) * polarity)
             self.fi = fi
             self.thre = thre
@@ -50,7 +51,7 @@ class Rooter:
             else:
                 self.filt_w = self._cut_noise(self.thre)
 
-    def view_waveform(self, num):
+    def view_waveform(self, num, view_wind=None, view_raw=False):
         """
         View a waveform from ROOT file
 
@@ -58,9 +59,26 @@ class Rooter:
         ----------
             num : int
                 Waveform number to view
+            view_wind : tuple of ints, optional
+                How much of the waveform to view
+            view_raw : bool, optional
+                View waveforms with no polarity or baseline adjustments
         """
-        x = np.arange(0, len(self.w[num]) * 4, 4)
-        plt.plot(x, self.w[num])
+        if view_wind is None:
+            x = np.arange(0, len(self.w[num]) * 4, 4)
+            if view_raw:
+                plt.plot(x, self.raw_w[num])
+            else:
+                plt.plot(x, self.w[num])
+        else:
+            view_st, view_en = view_wind
+            i_st = view_st // 4 # convert ns to index
+            i_en = view_en // 4 # convert ns to index
+            x = np.arange(view_st, view_en, 4)
+            if view_raw:
+                plt.plot(x, self.raw_w[num][i_st:i_en])
+            else:
+                plt.plot(x, self.w[num][i_st:i_en])
         plt.xlabel('Time [ns]', loc='right')
         plt.ylabel('ADC', loc='top')
         plt.title('Run ' + self.fi[0:2] + ' Waveform ' + str(num))
@@ -100,10 +118,13 @@ class Rooter:
             y_log : bool, optional
                 Plot y axis with log scale
         """
-        spec = np.apply_along_axis(np.sum, 1, self.w[:, wind[0]:wind[1] + 1])
+        int_st, int_en = wind
+        i_st = int_st // 4 # convert ns to index
+        i_en = int_en // 4 # convert ns to index
+        spec = np.apply_along_axis(np.sum, 1, self.w[:, i_st:i_en + 1])
         plt.hist(spec[(spec > view_wind[0]) * (spec < view_wind[1])],
-                 bins=n_bins, histtype='step', label='Int. wind. ' + str(wind[0] * 4)
-                                                     + '-' + str(wind[1] * 4))
+                 bins=n_bins, histtype='step', label='Int. wind. ' + str(int_st)
+                                                     + '-' + str(int_en))
         plt.xlabel('Integrated ADC', loc='right')
         plt.ylabel('Count', loc='top')
         plt.title('Run ' + self.fi[0:2] + ' Spectrum')
@@ -180,7 +201,10 @@ class Rooter:
             convolve : bool, optional
                 Convolve fits and plot them
         """
-        spec = np.apply_along_axis(np.sum, 1, self.w[:, wind[0]:wind[1] + 1])
+        int_st, int_en = wind
+        i_st = int_st // 4 # convert ns to index
+        i_en = int_en // 4 # convert ns to index
+        spec = np.apply_along_axis(np.sum, 1, self.w[:, i_st:i_en + 1])
         spec = spec[(spec > view_wind[0]) * (spec < view_wind[1])]
         hist, bin_b = np.histogram(spec, bins=n_bins)
         bin_w = np.diff(bin_b)
@@ -198,7 +222,7 @@ class Rooter:
             y = func(x, *popt)
             ys.append(y)
             if view:
-                plt.plot(x[(y > 1) * (y < 2000)], y[(y > 1) * (y < 2000)],
+                plt.plot(x[(y > 1) * (y < 15000)], y[(y > 1) * (y < 15000)],
                          '--', label='fit ' + str(fit_num))
             fit_num += 1
         if print_res:
@@ -217,13 +241,14 @@ class Rooter:
             plt.yscale('log')
         if view:
             plt.hist(spec[(spec > view_wind[0]) * (spec < view_wind[1])],
-                     bins=n_bins, histtype='step', label='Int. wind. ' + str(wind[0] * 4)
-                     + '-' + str(wind[1] * 4))
+                     bins=n_bins, histtype='step', label='Int. wind. ' + str(int_st)
+                     + '-' + str(int_en))
             plt.legend()
             plt.xlabel('Integrated ADC', loc='right')
             plt.ylabel('Count', loc='top')
             plt.title('Run ' + self.fi[0:2] + ' Spectrum and Fits')
             plt.show()
+            print(params)
         if convolve:
             self._convolve_fits(spec, x, ys)
 
@@ -386,8 +411,12 @@ class Rooter:
                 w = filt_w[i] - thre
                 cross = w[1:] * w[:-1] < 0
                 idx = np.where(cross == True)
-                main_st = idx[0][0]
-                main_en = idx[0][1]
+                try:
+                    main_st = idx[0][0]
+                    main_en = idx[0][1]
+                except IndexError as i_err:
+                    print(f'IndexError on waveform {i}')
+                    continue
                 pre = filt_w[i][:main_st - 1] + 15
                 post = filt_w[i][main_en + 2:] + 15
                 pre_cross = pre[1:][pre[1:] * pre[:-1] < 0]
@@ -423,16 +452,29 @@ class Rooter:
 
 if __name__ == '__main__':
     thre = 187.5
-    r = Rooter('12.root', thre, filt=True)
+    r = Rooter('12.root', thre, filt=False)
     #  r.view_max_amplitudes()
+    for i in range(20):
+        r.view_waveform(i)
     #  r.gain((160, 170))
-    #  r.view_spectrum((162, 175), y_log=True)
-    #  r.fit_spectrum((162, 175), [deap_ped, spe],
+    #  r.view_spectrum((660, 690), y_log=False)
+
+    #  #  Fit values and initial parameters for run 12
+    #  r.fit_spectrum((160 * 4, 170 * 4), [deap_ped, spe],
                    #  [(-200, 200), (0, 900)],
                    #  [[6.7e4, -20, 25], [9e4, 8.8e2, 8e-2, 1e5, 1.43, 7.14, 2.2e-1, 0.02, 500]],
-                   #  y_log=True, view_wind=(-200, 2000), view=False, convolve=True)
+                   #  y_log=True, view_wind=(-200, 2000), view=True, convolve=True)
+
+    #  r.fit_spectrum((660, 690), [deap_ped], [(-100, 150)],
+                   #  [[5e5, -70, 20]], y_log=True)
+    #  r.fit_spectrum((660, 690), [deap_gamma], [(500, 1500)],
+                   #  [[1e5, 200, .25, 200]], y_log=True)
+    #  r.fit_spectrum((660, 690), [deap_expo], [(0, 700)],
+                   #  [[12.0, 0.02, 500, 50]], y_log=True)
+
     #  r.pre_post_pulsing(thre, thre * 0.3, (2, 23), (6, 38), (38, 6250))
-    r.post_pulse_hist(thre, thre * 0.3)
+    #  r.post_pulse_hist(thre, thre * 0.3)
+
     #  #  Classification of waveforms using scikit-learn
     #  #  use with filtering turned off
     #  data = r.w
