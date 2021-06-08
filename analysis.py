@@ -27,29 +27,26 @@ class Rooter:
             Contains the waveforms as a 2d array as numpy arrays
     """
 
-    def __init__(self, fi, thre, filt=True):
+    def __init__(self, fi, filt=False, thre=None):
         """
         Parameters
         ----------
             fi : string
                 File name used for the analysis
-            thre : float
-                SPE threshold value
             filt : bool, optional
                 Use waveforms filtered for noisiness in the analysis
+            thre : float, optional
+                SPE threshold value for filtering waveforms
         """
         with uproot.open(fi + ':waveformTree') as tree:
             waveforms = tree['waveform'].array()
             baselines = tree['baseline'].array()
             polarity = tree['polarity'].array()
-            self.raw_w = ak.to_numpy(waveforms)
             self.w = ak.to_numpy((waveforms - baselines) * polarity)
+            self.raw_w = ak.to_numpy(waveforms)
             self.fi = fi
-            self.thre = thre
             if filt:
-                self.w = self._cut_noise(self.thre)
-            else:
-                self.filt_w = self._cut_noise(self.thre)
+                self.w = self._cut_noise(thre)
 
     def view_waveform(self, num, view_wind=None, view_raw=False):
         """
@@ -75,10 +72,16 @@ class Rooter:
             i_st = view_st // 4 # convert ns to index
             i_en = view_en // 4 # convert ns to index
             x = np.arange(view_st, view_en, 4)
-            if view_raw:
-                plt.plot(x, self.raw_w[num][i_st:i_en])
-            else:
-                plt.plot(x, self.w[num][i_st:i_en])
+            try:
+                if view_raw:
+                    plt.plot(x, self.raw_w[num][i_st:i_en])
+                else:
+                    plt.plot(x, self.w[num][i_st:i_en])
+            except ValueError:
+                if view_raw:
+                    plt.plot(x, self.raw_w[num][i_st:i_en+1])
+                else:
+                    plt.plot(x, self.w[num][i_st:i_en+1])
         plt.xlabel('Time [ns]', loc='right')
         plt.ylabel('ADC', loc='top')
         plt.title('Run ' + self.fi[0:2] + ' Waveform ' + str(num))
@@ -451,26 +454,21 @@ class Rooter:
         plt.show()
 
 if __name__ == '__main__':
-    thre = 187.5
-    r = Rooter('12.root', thre, filt=False)
-    #  r.view_max_amplitudes()
-    for i in range(20):
-        r.view_waveform(i)
-    #  r.gain((160, 170))
-    #  r.view_spectrum((660, 690), y_log=False)
-
     #  #  Fit values and initial parameters for run 12
-    #  r.fit_spectrum((160 * 4, 170 * 4), [deap_ped, spe],
-                   #  [(-200, 200), (0, 900)],
-                   #  [[6.7e4, -20, 25], [9e4, 8.8e2, 8e-2, 1e5, 1.43, 7.14, 2.2e-1, 0.02, 500]],
-                   #  y_log=True, view_wind=(-200, 2000), view=True, convolve=True)
+    #  r1 = Rooter('12.root')
+    #  r1.fit_spectrum((160 * 4, 170 * 4), [deap_ped, spe],
+    #                 [(-200, 200), (0, 900)],
+    #                 [[6.7e4, -20, 25], [9e4, 8.8e2, 8e-2, 1e5, 1.43, 7.14, 2.2e-1, 0.02, 500]],
+    #                 y_log=True, view_wind=(-200, 2000), view=True, convolve=True)
 
-    #  r.fit_spectrum((660, 690), [deap_ped], [(-100, 150)],
-                   #  [[5e5, -70, 20]], y_log=True)
-    #  r.fit_spectrum((660, 690), [deap_gamma], [(500, 1500)],
-                   #  [[1e5, 200, .25, 200]], y_log=True)
-    #  r.fit_spectrum((660, 690), [deap_expo], [(0, 700)],
-                   #  [[12.0, 0.02, 500, 50]], y_log=True)
+    #  Fit values and initial parameters for run 10
+    r2 = Rooter('10.root')
+    r2.fit_spectrum((660, 690), [deap_ped], [(-100, 150)],
+                   [[5e5, -70, 20]], y_log=True)
+    r2.fit_spectrum((660, 690), [deap_gamma], [(500, 1500)],
+                   [[1e5, 200, .25]], y_log=True)
+    r2.fit_spectrum((660, 690), [deap_expo], [(0, 300)],
+                   [[12.0, 0.02, 500]], y_log=True)
 
     #  r.pre_post_pulsing(thre, thre * 0.3, (2, 23), (6, 38), (38, 6250))
     #  r.post_pulse_hist(thre, thre * 0.3)
