@@ -238,8 +238,12 @@ class Rooter:
             min_i = np.argmin(hist[max_i:peak_i])
             min_i = max_i + min_i
             pv = hist[peak_i] / hist[min_i]
-            plt.text(1000, 1500, f'P/V: {pv:.2f}\nRes: '
-                                 f'{res:.2f}\nSPE Peak: {adj_mean:.2f}')
+            zeros = np.sum(hist[:min_i])
+            ones = np.sum(hist[min_i:])
+            per_0pe = zeros / (zeros + ones)
+            plt.text(500, 1500, f'P/V: {pv:.2f}\nRes: '
+                                 f'{res:.2f}\nSPE Peak: {adj_mean:.2f}\n'
+                                 f'% 0-PE: {per_0pe:.2f}')
         if y_log:
             plt.yscale('log')
         if view:
@@ -335,11 +339,11 @@ class Rooter:
             pulse_thre : int or float
                 Threshold value for pre- and post-pulses
             pre_wind : tuple of ints
-                Start and end of window to count pre-pulses, indices not times
+                Start and end of window to count pre-pulses, times in ns
             late_wind : tuple of ints
-                Start and end of window to count late-pulses, indices not times
+                Start and end of window to count late-pulses, times in ns
             after_wind : tuple of ints
-                Start and end of window to count after-pulses, indices not times
+                Start and end of window to count after-pulses, times in ns
         """
         spe = 0
         pre = 0
@@ -352,24 +356,16 @@ class Rooter:
             cross = x[1:][w[1:] * w[:-1] < 0]
             if len(cross) > 0:
                 spe_x = cross[0]
-                pre_s = spe_x - pre_wind[1]
-                pre_e = spe_x - pre_wind[0]
-                late_s = spe_x + late_wind[0]
-                late_e = spe_x + late_wind[1]
-                after_s = spe_x + after_wind[0]
-                after_e = spe_x + after_wind[1]
+                pre_s = spe_x - pre_wind[1] // 4
+                pre_e = spe_x - pre_wind[0] // 4
+                late_s = spe_x + late_wind[0] // 4
+                late_e = spe_x + late_wind[1] // 4
+                after_s = spe_x + after_wind[0] // 4
+                after_e = spe_x + after_wind[1] // 4
                 spe += 1
-                new_pre = self._count_pulses(waveform[pre_s:pre_e], pulse_thre)
-                new_late = self._count_pulses(waveform[late_s:late_e], pulse_thre)
-                new_after = self._count_pulses(waveform[after_s:after_e], pulse_thre)
-                if i < 5550 and (new_pre > 1 or new_late > 1 or new_after > 1):
-                    plt.plot(waveform)
-                    plt.axhline(spe_thre, c='r', ls='--')
-                    plt.axhline(pulse_thre, c='r', ls='-.')
-                    plt.show()
-                pre += new_pre
-                late += new_late
-                after += new_after
+                pre += self._count_pulses(waveform[pre_s:pre_e], pulse_thre)
+                late += self._count_pulses(waveform[late_s:late_e], pulse_thre)
+                after += self._count_pulses(waveform[after_s:after_e], pulse_thre)
             i += 1
         print(f'Pre-Pulsing: {pre / spe * 100 : .2f}%')
         print(f'Late-Pulsing: {late / spe * 100 : .2f}%')
@@ -430,7 +426,7 @@ class Rooter:
                     to_delete.append(i)
         return np.delete(filt_w, to_delete, axis=0)
 
-    def post_pulse_hist(self, spe_thre, pulse_thre):
+    def post_pulse_hist(self, spe_thre, pulse_thre, n_bins=10):
         hist = np.array([])
         for waveform in self.w:
             x = np.arange(0, len(waveform))
@@ -450,28 +446,65 @@ class Rooter:
             #  pulses = np.delete(pulses, [i for i in range(len(pulses)) if i % 2 != 0])
             if pulses.size != 0:
                 hist = np.append(hist, pulses)
-        plt.hist(hist, bins=10, histtype='step')
+        plt.hist(hist, bins=n_bins, histtype='step')
+        plt.xlabel('Time after main pulse [ns]', loc='right')
+        plt.ylabel('Counts', loc='top')
+        plt.title('Run ' + self.fi[0:2] + ' ' +'After-Pulsing Time Distribution')
+        plt.show()
+
+    def view_dark_rate(self, thre_st, thre_en=None, thre_step=10, up_time=5*60):
+        """
+        Count the number of pulses above a certain threshold and determine the corresponding
+        rate
+
+        Parameters
+        ----------
+            thre_st : int
+                The threshold value to find the rate at, or the beginning threshold value
+                in a range of values
+            thre_en : int, optional
+                If given, the ending threshold value to find the rate at
+            thre_step : int, optional
+                The step value between beginning and ending threshold
+            up_time : float, optional
+                The runtime of the data set in seconds
+        """
+        if thre_en is not None:
+            thres = np.arange(thre_st, thre_en, thre_step)
+        else:
+            thres = np.array([thre_st])
+        counts = np.zeros_like(thres)
+        for i, thre in np.ndenumerate(thres):
+            for j in range(len(self.w)):
+                w = self.w[j] - thre
+                cross = w[1:] * w[:-1] < 0
+                counts[i] += len(w[1:][cross]) // 2
+            print(f'For threshold {thre} saw {counts[i]} events for a rate of {counts[i] / up_time:.2f} Hz')
+        plt.scatter(thres, counts / up_time)
+        plt.xlabel('Threshold [ADC]', loc='right')
+        plt.ylabel('Rate [Hz]', loc='top')
+        plt.title(f'Run {self.fi[0:2]} Rate Counts')
         plt.show()
 
 if __name__ == '__main__':
     #  #  Fit values and initial parameters for run 12
-    #  r1 = Rooter('12.root')
+    r1 = Rooter('12.root')
     #  r1.fit_spectrum((160 * 4, 170 * 4), [deap_ped, spe],
     #                 [(-200, 200), (0, 900)],
     #                 [[6.7e4, -20, 25], [9e4, 8.8e2, 8e-2, 1e5, 1.43, 7.14, 2.2e-1, 0.02, 500]],
     #                 y_log=True, view_wind=(-200, 2000), view=True, convolve=True)
+    r1.view_dark_rate(180)
 
-    #  Fit values and initial parameters for run 10
-    r2 = Rooter('10.root')
-    r2.fit_spectrum((660, 690), [deap_ped], [(-100, 150)],
-                   [[5e5, -70, 20]], y_log=True)
-    r2.fit_spectrum((660, 690), [deap_gamma], [(500, 1500)],
-                   [[1e5, 200, .25]], y_log=True)
-    r2.fit_spectrum((660, 690), [deap_expo], [(0, 300)],
-                   [[12.0, 0.02, 500]], y_log=True)
-
-    #  r.pre_post_pulsing(thre, thre * 0.3, (2, 23), (6, 38), (38, 6250))
-    #  r.post_pulse_hist(thre, thre * 0.3)
+    #  #  Fit values and initial parameters for run 10
+    #  r2 = Rooter('10.root', filt=True, thre=187.5)
+    #  r2.fit_spectrum((660, 690), [deap_ped], [(-100, 150)],
+    #                 [[5e5, -70, 20]], y_log=True)
+    #  r2.fit_spectrum((660, 690), [deap_gamma], [(500, 1500)],
+    #                 [[1e5, 200, .25]], y_log=True)
+    #  r2.fit_spectrum((660, 690), [deap_expo], [(0, 300)],
+    #                 [[12.0, 0.02, 500]], y_log=True)
+    #  r2.fit_spectrum((660, 690), [deap_ped, deap_ped], [(-200, 200), (450, 1120)],
+                    #  [[5e5, -70, 20], [1e5, 700, 350]], y_log=True, print_res=True)
 
     #  #  Classification of waveforms using scikit-learn
     #  #  use with filtering turned off
