@@ -1,5 +1,5 @@
 *.root
 .DS_Store
 *.pdf
-
 __pychache__/
+summer_2021_data/
