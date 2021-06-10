@@ -479,7 +479,7 @@ class Rooter:
                 w = self.w[j] - thre
                 cross = w[1:] * w[:-1] < 0
                 counts[i] += len(w[1:][cross]) // 2
-            print(f'For threshold {thre} saw {counts[i]} events for a rate of {counts[i] / up_time:.2f} Hz')
+            print(f'For threshold {thre} saw {counts[i]} events for a rate of {counts[i] / up_time :.2f} Hz')
         plt.scatter(thres, counts / up_time)
         plt.xlabel('Threshold [ADC]', loc='right')
         plt.ylabel('Rate [Hz]', loc='top')
@@ -488,12 +488,12 @@ class Rooter:
 
 if __name__ == '__main__':
     #  #  Fit values and initial parameters for run 12
-    r1 = Rooter('12.root')
+    #  r1 = Rooter('12.root')
     #  r1.fit_spectrum((160 * 4, 170 * 4), [deap_ped, spe],
     #                 [(-200, 200), (0, 900)],
     #                 [[6.7e4, -20, 25], [9e4, 8.8e2, 8e-2, 1e5, 1.43, 7.14, 2.2e-1, 0.02, 500]],
     #                 y_log=True, view_wind=(-200, 2000), view=True, convolve=True)
-    r1.view_dark_rate(180)
+    #  r1.view_dark_rate(180)
 
     #  #  Fit values and initial parameters for run 10
     #  r2 = Rooter('10.root', filt=True, thre=187.5)
@@ -565,3 +565,29 @@ if __name__ == '__main__':
     #  print('Gradient Boosting')
     #  print(' accuracy = ', accuracy_score(y_test, pred))
     #  print(confusion_matrix(y_test, pred))
+    r1 = Rooter('./summer_2021_data/01.adaq.root')
+    r2 = Rooter('./summer_2021_data/02.adaq.root')
+    r3 = Rooter('./summer_2021_data/03.adaq.root')
+    r4 = Rooter('./summer_2021_data/04.adaq.root')
+    r5 = Rooter('./summer_2021_data/05.adaq.root')
+    r6 = Rooter('./summer_2021_data/06.adaq.root')
+    r7 = Rooter('./summer_2021_data/07.adaq.root')
+    r8 = Rooter('./summer_2021_data/08.adaq.root')
+    r9 = Rooter('./summer_2021_data/09.adaq.root')
+    r10 = Rooter('./summer_2021_data/10.adaq.root')
+    r11 = Rooter('./summer_2021_data/11.adaq.root')
+    r12 = Rooter('./summer_2021_data/12.adaq.root')
+
+    for i in range(5):
+        r1.view_waveform(i)
+        r2.view_waveform(i)
+        r3.view_waveform(i)
+        r4.view_waveform(i)
+        r5.view_waveform(i)
+        r6.view_waveform(i)
+        r7.view_waveform(i)
+        r8.view_waveform(i)
+        r9.view_waveform(i)
+        r10.view_waveform(i)
+        r11.view_waveform(i)
+        r12.view_waveform(i)
