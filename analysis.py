@@ -10,11 +10,6 @@ import copy
 from scipy.optimize import curve_fit
 from fit_funcs import deap_expo, deap_gamma, deap_ped, spe, ped_spe
 
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.ensemble import GradientBoostingClassifier as gbc
-from sklearn.metrics import accuracy_score
-from sklearn.metrics import confusion_matrix
-
 class Rooter:
     """
     A class to do the analysis of a ROOT file and associated waveforms
@@ -84,7 +79,7 @@ class Rooter:
                     plt.plot(x, self.w[num][i_st:i_en+1])
         plt.xlabel('Time [ns]')
         plt.ylabel('ADC')
-        plt.title('Run ' + self.fi[0:2] + ' Waveform ' + str(num))
+        plt.title('Run ' + self.fi[-7:-5] + ' Waveform ' + str(num))
         plt.show()
 
     def view_max_amplitudes(self, n_bins=150, view_wind=(0, 2000)):
@@ -101,9 +96,9 @@ class Rooter:
         hist = np.apply_along_axis(np.amax, 1, self.w)
         plt.hist(hist[(hist > view_wind[0]) * (hist < view_wind[1])],
                  bins=n_bins, histtype='step')
-        plt.xlabel('ADC', loc='right')
-        plt.ylabel('Count', loc='top')
-        plt.title('Run ' + self.fi[0:2] + ' Max. Amps.')
+        plt.xlabel('ADC')
+        plt.ylabel('Count')
+        plt.title('Run ' + self.fi[-7:-5] + ' Max. Amps.')
         plt.show()
 
     def view_spectrum(self, wind, n_bins=150, view_wind=(-200, 4000), y_log=False):
@@ -128,9 +123,9 @@ class Rooter:
         plt.hist(spec[(spec > view_wind[0]) * (spec < view_wind[1])],
                  bins=n_bins, histtype='step', label='Int. wind. ' + str(int_st)
                                                      + '-' + str(int_en))
-        plt.xlabel('Integrated ADC', loc='right')
-        plt.ylabel('Count', loc='top')
-        plt.title('Run ' + self.fi[0:2] + ' Spectrum')
+        plt.xlabel('Integrated ADC')
+        plt.ylabel('Count')
+        plt.title('Run ' + self.fi[-7:-5] + ' Spectrum')
         plt.legend()
         if y_log:
             plt.yscale('log')
@@ -170,14 +165,16 @@ class Rooter:
             plt.hist(spec[(spec > view_wind[0]) * (spec < view_wind[1])],
                      bins=n_bins, histtype='step', label='Int. wind. ' + str(wind[0] * 4)
                                                          + '-' + str(wind[1] * 4))
-        plt.xlabel('Integrated ADC', loc='right')
-        plt.ylabel('Count', loc='top')
-        plt.title('Run ' + self.fi[0:2] + ' Spectrum')
+        plt.xlabel('Integrated ADC')
+        plt.ylabel('Count')
+        plt.title('Run ' + self.fi[-7:-5] + ' Spectrum')
         plt.legend()
         plt.show()
 
-    def fit_spectrum(self, wind, funcs, bounds, p0s, n_bins=150, view_wind=(-200, 4000),
-                     y_log=False, print_res=False, view=True, convolve=False):
+    def fit_spectrum(self, wind, funcs, bounds, p0s, n_bins=150, 
+                     view_wind=(-200, 4000), y_log=False, 
+                     print_res=False, view=True, convolve=False,
+                     text_loc=(500, 1500)):
         """
         Fit a spectrum with a given function(s) over a specified range(s)
 
@@ -225,7 +222,7 @@ class Rooter:
             y = func(x, *popt)
             ys.append(y)
             if view:
-                plt.plot(x[(y > 1) * (y < 15000)], y[(y > 1) * (y < 15000)],
+                plt.plot(x[(y > 10) * (y < 15000)], y[(y > 10) * (y < 15000)],
                          '--', label='fit ' + str(fit_num))
             fit_num += 1
         if print_res:
@@ -241,21 +238,20 @@ class Rooter:
             zeros = np.sum(hist[:min_i])
             ones = np.sum(hist[min_i:])
             per_0pe = zeros / (zeros + ones)
-            plt.text(500, 1500, f'P/V: {pv:.2f}\nRes: '
+            plt.text(text_loc[0], text_loc[1], f'P/V: {pv:.2f}\nRes: '
                                  f'{res:.2f}\nSPE Peak: {adj_mean:.2f}\n'
                                  f'% 0-PE: {per_0pe:.2f}')
         if y_log:
             plt.yscale('log')
-        if view:
-            plt.hist(spec[(spec > view_wind[0]) * (spec < view_wind[1])],
-                     bins=n_bins, histtype='step', label='Int. wind. ' + str(int_st)
-                     + '-' + str(int_en))
-            plt.legend()
-            plt.xlabel('Integrated ADC', loc='right')
-            plt.ylabel('Count', loc='top')
-            plt.title('Run ' + self.fi[0:2] + ' Spectrum and Fits')
-            plt.show()
-            print(params)
+        plt.hist(spec[(spec > view_wind[0]) * (spec < view_wind[1])],
+                 bins=n_bins, histtype='step', label='Int. wind. ' + str(int_st)
+                 + '-' + str(int_en))
+        plt.legend()
+        plt.xlabel('Integrated ADC')
+        plt.ylabel('Count')
+        plt.title('Run ' + self.fi[-7:-5] + ' Spectrum and Fits')
+        plt.show()
+        print(params)
         if convolve:
             self._convolve_fits(spec, x, ys)
 
@@ -413,7 +409,7 @@ class Rooter:
                 try:
                     main_st = idx[0][0]
                     main_en = idx[0][1]
-                except IndexError as i_err:
+                except IndexError:
                     print(f'IndexError on waveform {i}')
                     continue
                 pre = filt_w[i][:main_st - 1] + 15
@@ -447,9 +443,9 @@ class Rooter:
             if pulses.size != 0:
                 hist = np.append(hist, pulses)
         plt.hist(hist, bins=n_bins, histtype='step')
-        plt.xlabel('Time after main pulse [ns]', loc='right')
-        plt.ylabel('Counts', loc='top')
-        plt.title('Run ' + self.fi[0:2] + ' ' +'After-Pulsing Time Distribution')
+        plt.xlabel('Time after main pulse [ns]')
+        plt.ylabel('Counts')
+        plt.title('Run ' + self.fi[-7:-5] + ' ' +'After-Pulsing Time Distribution')
         plt.show()
 
     def view_dark_rate(self, thre_st, thre_en=None, thre_step=10, up_time=5*60):
@@ -481,113 +477,71 @@ class Rooter:
                 counts[i] += len(w[1:][cross]) // 2
             print(f'For threshold {thre} saw {counts[i]} events for a rate of {counts[i] / up_time :.2f} Hz')
         plt.scatter(thres, counts / up_time)
-        plt.xlabel('Threshold [ADC]', loc='right')
-        plt.ylabel('Rate [Hz]', loc='top')
-        plt.title(f'Run {self.fi[0:2]} Rate Counts')
+        plt.xlabel('Threshold [ADC]')
+        plt.ylabel('Rate [Hz]')
+        plt.title(f'Run {self.fi[-7:-5]} Rate Counts')
         plt.show()
 
 if __name__ == '__main__':
-    #  #  Fit values and initial parameters for run 12
-    #  r1 = Rooter('12.root')
-    #  r1.fit_spectrum((160 * 4, 170 * 4), [deap_ped, spe],
-    #                 [(-200, 200), (0, 900)],
-    #                 [[6.7e4, -20, 25], [9e4, 8.8e2, 8e-2, 1e5, 1.43, 7.14, 2.2e-1, 0.02, 500]],
-    #                 y_log=True, view_wind=(-200, 2000), view=True, convolve=True)
-    #  r1.view_dark_rate(180)
+    r1 = Rooter('../../data/summer_2021/ROOT Files/01.root')
+    r2 = Rooter('../../data/summer_2021/ROOT Files/02.root')
+    r3 = Rooter('../../data/summer_2021/ROOT Files/03.root')
+    r4 = Rooter('../../data/summer_2021/ROOT Files/04.root')
+    r5 = Rooter('../../data/summer_2021/ROOT Files/05.root')
+    r6 = Rooter('../../data/summer_2021/ROOT Files/06.root')
+    r7 = Rooter('../../data/summer_2021/ROOT Files/07.root')
+    r8 = Rooter('../../data/summer_2021/ROOT Files/08.root')
+    r9 = Rooter('../../data/summer_2021/ROOT Files/09.root')
+    r10 = Rooter('../../data/summer_2021/ROOT Files/10.root')
+    r11 = Rooter('../../data/summer_2021/ROOT Files/11.root')
+    r12 = Rooter('../../data/summer_2021/ROOT Files/12.root')
 
-    #  #  Fit values and initial parameters for run 10
-    #  r2 = Rooter('10.root', filt=True, thre=187.5)
-    #  r2.fit_spectrum((660, 690), [deap_ped], [(-100, 150)],
-    #                 [[5e5, -70, 20]], y_log=True)
-    #  r2.fit_spectrum((660, 690), [deap_gamma], [(500, 1500)],
-    #                 [[1e5, 200, .25]], y_log=True)
-    #  r2.fit_spectrum((660, 690), [deap_expo], [(0, 300)],
-    #                 [[12.0, 0.02, 500]], y_log=True)
-    #  r2.fit_spectrum((660, 690), [deap_ped, deap_ped], [(-200, 200), (450, 1120)],
-                    #  [[5e5, -70, 20], [1e5, 700, 350]], y_log=True, print_res=True)
-
-    #  #  Classification of waveforms using scikit-learn
-    #  #  use with filtering turned off
-    #  data = r.w
-    #  x_train = data[:10000]
-    #  y_train = []
-    #  for i in range(len(x_train)):
-        #  peak = np.max(x_train[i])
-        #  if peak > thre:
-            #  w = x_train[i] - thre
-            #  cross = w[1:] * w[:-1] < 0
-            #  idx = np.where(cross == True)
-            #  main_st = idx[0][0]
-            #  main_en = idx[0][1]
-            #  pre = x_train[i][:main_st - 1] + 15
-            #  post = x_train[i][main_en + 2:] + 15
-            #  pre_cross = pre[1:][pre[1:] * pre[:-1] < 0]
-            #  post_cross = post[1:][post[1:] * post[:-1] < 0]
-            #  len_pre = len(pre_cross)
-            #  len_post = len(post_cross)
-            #  if len_pre // 2 > 3 or len_post // 2 > 3:
-                #  y_train.append(0)
-            #  else:
-                #  y_train.append(1)
-        #  else:
-            #  y_train.append(2)
-    #  x_test = data[10000:]
-    #  y_test = []
-    #  for i in range(len(x_test)):
-        #  peak = np.max(x_test[i])
-        #  if peak > thre:
-            #  w = x_test[i] - thre
-            #  cross = w[1:] * w[:-1] < 0
-            #  idx = np.where(cross == True)
-            #  main_st = idx[0][0]
-            #  main_en = idx[0][1]
-            #  pre = x_test[i][:main_st - 1] + 15
-            #  post = x_test[i][main_en + 2:] + 15
-            #  pre_cross = pre[1:][pre[1:] * pre[:-1] < 0]
-            #  post_cross = post[1:][post[1:] * post[:-1] < 0]
-            #  len_pre = len(pre_cross)
-            #  len_post = len(post_cross)
-            #  if len_pre // 2 > 3 or len_post // 2 > 3:
-                #  y_test.append(0)
-            #  else:
-                #  y_test.append(1)
-        #  else:
-            #  y_test.append(2)
-    #  classifier = RandomForestClassifier()
-    #  model = classifier.fit(x_train, y_train)
-    #  pred = model.predict(x_test)
-    #  print('Random Forest')
-    #  print(' accuracy = ', accuracy_score(y_test, pred))
-    #  print(confusion_matrix(y_test, pred))
-    #  classifier = gbc()
-    #  model = classifier.fit(x_train, y_train)
-    #  pred = model.predict(x_test)
-    #  print('Gradient Boosting')
-    #  print(' accuracy = ', accuracy_score(y_test, pred))
-    #  print(confusion_matrix(y_test, pred))
-    r1 = Rooter('../../data/summer_2021/01.root')
-    r2 = Rooter('../../data/summer_2021/02.root')
-    r3 = Rooter('../../data/summer_2021/03.root')
-    r4 = Rooter('../../data/summer_2021/04.root')
-    r5 = Rooter('../../data/summer_2021/05.root')
-    r6 = Rooter('../../data/summer_2021/06.root')
-    r7 = Rooter('../../data/summer_2021/07.root')
-    r8 = Rooter('../../data/summer_2021/08.root')
-    r9 = Rooter('../../data/summer_2021/09.root')
-    r10 = Rooter('../../data/summer_2021/10.root')
-    r11 = Rooter('../../data/summer_2021/11.root')
-    r12 = Rooter('../../data/summer_2021/12.root')
-
-    for i in range(5):
-        r1.view_waveform(i)
-        r2.view_waveform(i)
-        r3.view_waveform(i)
-        r4.view_waveform(i)
-        r5.view_waveform(i)
-        r6.view_waveform(i)
-        r7.view_waveform(i)
-        r8.view_waveform(i)
-        r9.view_waveform(i)
-        r10.view_waveform(i)
-        r11.view_waveform(i)
-        r12.view_waveform(i)
+    r1.view_spectrum((650, 685), y_log=True)
+    r2.view_spectrum((650, 680), y_log=True)
+    r3.view_spectrum((650, 700), y_log=True)
+    r4.view_spectrum((650, 670), y_log=True)
+    r5.view_spectrum((660, 700), y_log=True)
+    r6.view_spectrum((670, 795), y_log=True)
+    r7.view_spectrum((650, 690), y_log=True)
+    r8.view_spectrum((655, 690), y_log=True)
+    r9.view_spectrum((650, 690), y_log=True, view_wind=(-200, 11500))
+    r10.view_spectrum((650, 685), y_log=True, view_wind=(-200, 11500))
+    r11.view_spectrum((660, 690), y_log=True, view_wind=(-200, 11500))
+    r12.view_spectrum((660, 695), y_log=True, view_wind=(-200, 11500))
+    
+    r5.fit_spectrum((650, 685), [deap_ped, deap_ped], 
+                    [(-200, 200), (400, 1100)], 
+                    [[2e5, -10, 20], [700, 700, 250]], y_log=True,
+                    print_res=True, text_loc=(500, 700))
+    r6.fit_spectrum((650, 680), [deap_ped, deap_ped],
+                    [(-200, 200), (1000, 2000)],
+                    [[2e5, -18, 22], [4.2e5, 1260, 634]],
+                    y_log=True, print_res=True, text_loc=(600, 600))
+    r7.fit_spectrum((650, 690), [deap_ped, deap_ped],
+                    [(-200, 200), (1000, 2000)],
+                    [[2e5, 117, 23], [3e5, 1530, 492]],
+                    y_log=True, print_res=True, text_loc=(600, 600))
+    r8.fit_spectrum((655, 690), [deap_ped, deap_ped],
+                    [(-200, 300), (500, 1200)],
+                    [[2e5, 108, 23], [3e5, 970, 300]],
+                    y_log=True, print_res=True, text_loc=(600, 600))
+    r9.fit_spectrum((650, 690), [deap_ped, deap_ped],
+                    [(-200, 300), (1000, 3500)],
+                    [[6e5, -27, 47], [1e6, 2400, 1040]], 
+                    view_wind=(-200, 11500), y_log=True, 
+                    print_res=True, text_loc=(2000, 700))
+    r10.fit_spectrum((650, 685), [deap_ped, deap_ped],
+                    [(-200, 300), (2000, 6000)],
+                    [[6e5, -46, 47], [1e6, 4590, 1820]], 
+                    view_wind=(-200, 11500), y_log=True, 
+                    print_res=True, text_loc=(2000, 700))
+    r11.fit_spectrum((660, 690), [deap_ped, deap_ped],
+                    [(-200, 300), (2000, 6000)],
+                    [[6e5, -10, 45], [1e6, 4680, 1830]], 
+                    view_wind=(-200, 11500), y_log=True, 
+                    print_res=True, text_loc=(2000, 700))
+    r12.fit_spectrum((660, 695), [deap_ped, deap_ped],
+                    [(-200, 200), (1800, 3500)],
+                    [[6e5, -10, 45], [9.3e5, 2560, 1000]], 
+                    view_wind=(-200, 11500), y_log=True, 
+                    print_res=True, text_loc=(2000, 700))
