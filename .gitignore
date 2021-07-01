@@ -3,3 +3,8 @@
 *.pdf
 __pycache__/
 summer_2021_data/
+data/
+figures/
+*.ipynb
+.spyproject/
+.ipynb_checkpoints/

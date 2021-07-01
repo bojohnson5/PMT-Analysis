@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
+#%% imports
 import numpy as np
 import matplotlib.pyplot as plt
 import awkward as ak
@@ -8,16 +9,23 @@ import uproot
 import copy
 
 from scipy.optimize import curve_fit
+from numba import njit
 from fit_funcs import deap_expo, deap_gamma, deap_ped, spe, ped_spe
+from helper_funcs import _count_crosses, _count_crosses_single, _count
 
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.ensemble import GradientBoostingClassifier as gbc
-from sklearn.metrics import accuracy_score
-from sklearn.metrics import confusion_matrix
+import time
 
+# from sklearn.ensemble import RandomForestClassifier
+# from sklearn.ensemble import GradientBoostingClassifier as gbc
+# from sklearn.metrics import accuracy_score
+# from sklearn.metrics import confusion_matrix
+
+#%% Rooter class
 class Rooter:
     """
     A class to do the analysis of a ROOT file and associated waveforms
+    from the ADAQ software in conjunction with PMT tests for
+    COH-Ar-750 experiment
 
     Attributes
     ----------
@@ -45,7 +53,7 @@ class Rooter:
             self.w = ak.to_numpy((waveforms - baselines) * polarity)
             self.raw_w = ak.to_numpy(waveforms)
             self.fi = fi
-            if filt:
+            if filt and thre is not None:
                 self.w = self._cut_noise(thre)
 
     def view_waveform(self, num, view_wind=None, view_raw=False):
@@ -77,17 +85,18 @@ class Rooter:
                     plt.plot(x, self.raw_w[num][i_st:i_en])
                 else:
                     plt.plot(x, self.w[num][i_st:i_en])
-            except ValueError:
+            except ValueError: # used when the start and end times don't match up
                 if view_raw:
                     plt.plot(x, self.raw_w[num][i_st:i_en+1])
                 else:
                     plt.plot(x, self.w[num][i_st:i_en+1])
         plt.xlabel('Time [ns]', loc='right')
         plt.ylabel('ADC', loc='top')
-        plt.title('Run ' + self.fi[0:2] + ' Waveform ' + str(num))
+        plt.title('Run ' + self.fi[-7:-5] + ' Waveform ' + str(num))
         plt.show()
 
-    def view_max_amplitudes(self, n_bins=150, view_wind=(0, 2000)):
+    def view_max_amplitudes(self, n_bins=150, view_wind=(0, 2000),
+                            y_log=False):
         """
         Histogram the maximum amplitudes from waveforms
 
@@ -97,16 +106,21 @@ class Rooter:
                 Number of histogram bins
             view_wind : tuple of ints, optional
                 Viewing window for histogram
+            y_log : bool, optional
+                Logscale for y-axis
         """
-        hist = np.apply_along_axis(np.amax, 1, self.w)
-        plt.hist(hist[(hist > view_wind[0]) * (hist < view_wind[1])],
+        hist = self._find_max(self.w)
+        plt.hist(hist[(hist1 > view_wind[0]) * (hist < view_wind[1])],
                  bins=n_bins, histtype='step')
         plt.xlabel('ADC', loc='right')
         plt.ylabel('Count', loc='top')
-        plt.title('Run ' + self.fi[0:2] + ' Max. Amps.')
+        plt.title('Run ' + self.fi[-7:-5] + ' Max. Amps.')
+        if y_log:
+            plt.semilogy()
         plt.show()
 
-    def view_spectrum(self, wind, n_bins=150, view_wind=(-200, 4000), y_log=False):
+    def view_spectrum(self, wind, n_bins=150, view_wind=(-200, 4000), 
+                      y_log=False):
         """
         Histogram the integrated waveforms
 
@@ -124,13 +138,13 @@ class Rooter:
         int_st, int_en = wind
         i_st = int_st // 4 # convert ns to index
         i_en = int_en // 4 # convert ns to index
-        spec = np.apply_along_axis(np.sum, 1, self.w[:, i_st:i_en + 1])
+        spec = self._sum(self.w[:, i_st:i_en + 1])
         plt.hist(spec[(spec > view_wind[0]) * (spec < view_wind[1])],
                  bins=n_bins, histtype='step', label='Int. wind. ' + str(int_st)
                                                      + '-' + str(int_en))
         plt.xlabel('Integrated ADC', loc='right')
         plt.ylabel('Count', loc='top')
-        plt.title('Run ' + self.fi[0:2] + ' Spectrum')
+        plt.title('Run ' + self.fi[-7:-5] + ' Spectrum')
         plt.legend()
         if y_log:
             plt.yscale('log')
@@ -145,7 +159,7 @@ class Rooter:
             wind : tuple of ints
                 Integration window stop and start for current integration
         """
-        spec = np.apply_along_axis(np.sum, 1, self.w[:, wind[0]:wind[1] + 1])
+        spec = self._sum(self.w[:, wind[0]:wind[1] + 1])
         volts = np.linspace(0, 2, 4096)
         spec = spec.astype(int)
         spec = spec[(spec > 0) * (spec < 4096)]
@@ -166,18 +180,20 @@ class Rooter:
                 Viewing window for histogram
         """
         for wind in winds:
-            spec = np.apply_along_axis(np.sum, 1, self.w[:, wind[0]:wind[1] + 1])
+            spec = self._sum(self.w[:, wind[0]:wind[1] + 1])
             plt.hist(spec[(spec > view_wind[0]) * (spec < view_wind[1])],
                      bins=n_bins, histtype='step', label='Int. wind. ' + str(wind[0] * 4)
                                                          + '-' + str(wind[1] * 4))
         plt.xlabel('Integrated ADC', loc='right')
         plt.ylabel('Count', loc='top')
-        plt.title('Run ' + self.fi[0:2] + ' Spectrum')
+        plt.title('Run ' + self.fi[-7:-5] + ' Spectrum')
         plt.legend()
         plt.show()
 
-    def fit_spectrum(self, wind, funcs, bounds, p0s, n_bins=150, view_wind=(-200, 4000),
-                     y_log=False, print_res=False, view=True, convolve=False):
+    def fit_spectrum(self, wind, funcs, bounds, p0s, n_bins=150, 
+                     view_wind=(-200, 4000), y_log=False, 
+                     print_res=False, view=True, convolve=False,
+                     text_loc=(500, 1500)):
         """
         Fit a spectrum with a given function(s) over a specified range(s)
 
@@ -207,17 +223,18 @@ class Rooter:
         int_st, int_en = wind
         i_st = int_st // 4 # convert ns to index
         i_en = int_en // 4 # convert ns to index
-        spec = np.apply_along_axis(np.sum, 1, self.w[:, i_st:i_en + 1])
+        spec = self._sum(self.w[:, i_st:i_en + 1])
         spec = spec[(spec > view_wind[0]) * (spec < view_wind[1])]
         hist, bin_b = np.histogram(spec, bins=n_bins)
         bin_w = np.diff(bin_b)
         bin_c = bin_b[:-1] + bin_w / 2
 
-        fit_num = 1
+        fit_num = 0
         params = []
         x = np.linspace(view_wind[0], view_wind[1], 1000)
         ys = []
         for func, bound, p0 in zip(funcs, bounds, p0s):
+            fit_num += 1
             x_fit = bin_c[(bin_c > bound[0]) * (bin_c < bound[1])]
             y_fit = hist[(bin_c > bound[0]) * (bin_c < bound[1])]
             popt, _ = curve_fit(func, x_fit, y_fit, p0=p0)
@@ -225,25 +242,31 @@ class Rooter:
             y = func(x, *popt)
             ys.append(y)
             if view:
-                plt.plot(x[(y > 1) * (y < 15000)], y[(y > 1) * (y < 15000)],
+                plt.plot(x[(y > 10) * (y < 2e5)], y[(y > 10) * (y < 2e5)],
                          '--', label='fit ' + str(fit_num))
-            fit_num += 1
         if print_res:
-            adj_mean = params[1][1] - params[0][1]
-            res = adj_mean / params[1][2]
+            if fit_num != 1:
+                adj_mean = params[1][1] - params[0][1]
+                res = adj_mean / params[1][2]
+            else:
+                adj_mean = params[0][1]
+                res = adj_mean / params[0][2]
             max_i = np.argmax(hist)
-            peak_offset = 5
-            peak_i = np.argmax(hist[max_i + peak_offset:])
-            peak_i = max_i + peak_offset + peak_i
+            valley_i = self._find_valley(hist[max_i:])
+            valley_i = max_i + valley_i
+            peak_i = np.argmax(hist[valley_i:])
+            peak_i = valley_i + peak_i
             min_i = np.argmin(hist[max_i:peak_i])
             min_i = max_i + min_i
             pv = hist[peak_i] / hist[min_i]
             zeros = np.sum(hist[:min_i])
             ones = np.sum(hist[min_i:])
             per_0pe = zeros / (zeros + ones)
-            plt.text(500, 1500, f'P/V: {pv:.2f}\nRes: '
+            plt.text(text_loc[0], text_loc[1], 
+                                 f'Ped. sig: {params[0][2]:.2f}\n'
+                                 f'P/V: {pv:.2f}\nRes: '
                                  f'{res:.2f}\nSPE Peak: {adj_mean:.2f}\n'
-                                 f'% 0-PE: {per_0pe:.2f}')
+                                 f'0-PE: {per_0pe * 100:.0f}%')
         if y_log:
             plt.yscale('log')
         if view:
@@ -253,11 +276,22 @@ class Rooter:
             plt.legend()
             plt.xlabel('Integrated ADC', loc='right')
             plt.ylabel('Count', loc='top')
-            plt.title('Run ' + self.fi[0:2] + ' Spectrum and Fits')
+            plt.title('Run ' + self.fi[-7:-5] + ' Spectrum and Fits')
             plt.show()
             print(params)
         if convolve:
             self._convolve_fits(spec, x, ys)
+    
+    def _find_valley(self, hist):
+        """
+        Utility function used to find an approximate valley between the 0-PE and SPE
+        peaks
+        """
+        curr_val = hist[0]
+        for i in range(1, len(hist)):
+            if hist[i] > curr_val:
+                return i
+            curr_val = hist[i]
 
     def _convolve_fits(self, hist, x, ys):
         """
@@ -283,7 +317,7 @@ class Rooter:
         plt.xlabel('Integrated ADC', loc='right')
         plt.ylabel('Counts', loc='top')
         plt.semilogy()
-        plt.title('Run ' + self.fi[0:2] + ' Spectrum and DEAP Fit')
+        plt.title('Run ' + self.fi[-7:-5] + ' Spectrum and DEAP Fit')
         plt.ylim(bottom=10, top=2000)
         plt.legend()
         plt.show()
@@ -311,83 +345,104 @@ class Rooter:
         res[len2 - len1:] = array
         return res
 
-    def _find_nearest(self, array, value):
-        """
-        Return index of array which is closest to value
+    #  def pre_post_pulsing(self, spe_thre, pulse_thre, pre_wind, late_wind,
+                         #  after_wind):
+        #  """
+        #  Calculate the pre-, late-, and after-pulsing percentages
+#
+        #  Parameters
+        #  ----------
+            #  spe_thre : int or float
+                #  Threhold value for single photoelectrons
+            #  pulse_thre : int or float
+                #  Threshold value for pre- and post-pulses
+            #  pre_wind : tuple of ints
+                #  Start and end of window to count pre-pulses, times in ns
+            #  late_wind : tuple of ints
+                #  Start and end of window to count late-pulses, times in ns
+            #  after_wind : tuple of ints
+                #  Start and end of window to count after-pulses, times in ns
+        #  """
+        #  start = time.time()
+        #  spe = 0
+        #  pre = 0
+        #  late = 0
+        #  after = 0
+        #  i = 0
+        #  for waveform in self.w:
+            #  x = np.arange(0, len(waveform))
+            #  w = waveform - spe_thre
+            #  cross = x[1:][w[1:] * w[:-1] < 0]
+            #  if len(cross) > 0:
+                #  spe_x = cross[0]
+                #  pre_s = spe_x - pre_wind[1] // 4
+                #  pre_e = spe_x - pre_wind[0] // 4
+                #  late_s = spe_x + late_wind[0] // 4
+                #  late_e = spe_x + late_wind[1] // 4
+                #  after_s = spe_x + after_wind[0] // 4
+                #  after_e = spe_x + after_wind[1] // 4
+                #  spe += 1
+                #  #  pre += self._count_pulses(waveform[pre_s:pre_e], pulse_thre)
+                #  #  late += self._count_pulses(waveform[late_s:late_e], pulse_thre)
+                #  #  after += self._count_pulses(waveform[after_s:after_e], pulse_thre)
+                #  pre += _count_crosses_single(waveform[pre_s:pre_e], pulse_thre)
+                #  late += _count_crosses_single(waveform[late_s:late_e], pulse_thre)
+                #  after += _count_crosses_single(waveform[after_s:after_e], pulse_thre)
+            #  i += 1
+        #  print(f'Pre-Pulsing: {pre / spe * 100 : .2f}%')
+        #  print(f'Late-Pulsing: {late / spe * 100 : .2f}%')
+        #  print(f'After-Pulsing: {after / spe * 100 : .2f}%')
+        #  end = time.time()
+        #  print(f'Elapsed time: {end - start}')
+        #  start = time.time()
+        #  spe = 0
+        #  pre = 0
+        #  late = 0
+        #  after = 0
+        #  i = 0
+        #  for waveform in self.w:
+            #  x = np.arange(0, len(waveform))
+            #  w = waveform - spe_thre
+            #  cross = x[1:][w[1:] * w[:-1] < 0]
+            #  if len(cross) > 0:
+                #  spe_x = cross[0]
+                #  pre_s = spe_x - pre_wind[1] // 4
+                #  pre_e = spe_x - pre_wind[0] // 4
+                #  late_s = spe_x + late_wind[0] // 4
+                #  late_e = spe_x + late_wind[1] // 4
+                #  after_s = spe_x + after_wind[0] // 4
+                #  after_e = spe_x + after_wind[1] // 4
+                #  spe += 1
+                #  pre += self._count_pulses(waveform[pre_s:pre_e], pulse_thre)
+                #  late += self._count_pulses(waveform[late_s:late_e], pulse_thre)
+                #  after += self._count_pulses(waveform[after_s:after_e], pulse_thre)
+                #  #  pre += _count_crosses_single(waveform[pre_s:pre_e], pulse_thre)
+                #  #  late += _count_crosses_single(waveform[late_s:late_e], pulse_thre)
+                #  #  after += _count_crosses_single(waveform[after_s:after_e], pulse_thre)
+            #  i += 1
+        #  print(f'Pre-Pulsing: {pre / spe * 100 : .2f}%')
+        #  print(f'Late-Pulsing: {late / spe * 100 : .2f}%')
+        #  print(f'After-Pulsing: {after / spe * 100 : .2f}%')
+        #  end = time.time()
+        #  print(f'Elapsed time: {end - start}')
 
-        Parameters
-        ----------
-            array : array
-                Array to find the index of value in
-            value : float
-                The value to find in array, or closest to it
-
-        Returns
-        -------
-            Index value of array with entry closest to value
-        """
-        return np.argmin(np.abs(array - value))
-
-    def pre_post_pulsing(self, spe_thre, pulse_thre, pre_wind, late_wind, after_wind):
-        """
-        Calculate the pre-, late-, and after-pulsing percentages
-
-        Parameters
-        ----------
-            spe_thre : int or float
-                Threhold value for single photoelectrons
-            pulse_thre : int or float
-                Threshold value for pre- and post-pulses
-            pre_wind : tuple of ints
-                Start and end of window to count pre-pulses, times in ns
-            late_wind : tuple of ints
-                Start and end of window to count late-pulses, times in ns
-            after_wind : tuple of ints
-                Start and end of window to count after-pulses, times in ns
-        """
-        spe = 0
-        pre = 0
-        late = 0
-        after = 0
-        i = 0
-        for waveform in self.w:
-            x = np.arange(0, len(waveform))
-            w = waveform - spe_thre
-            cross = x[1:][w[1:] * w[:-1] < 0]
-            if len(cross) > 0:
-                spe_x = cross[0]
-                pre_s = spe_x - pre_wind[1] // 4
-                pre_e = spe_x - pre_wind[0] // 4
-                late_s = spe_x + late_wind[0] // 4
-                late_e = spe_x + late_wind[1] // 4
-                after_s = spe_x + after_wind[0] // 4
-                after_e = spe_x + after_wind[1] // 4
-                spe += 1
-                pre += self._count_pulses(waveform[pre_s:pre_e], pulse_thre)
-                late += self._count_pulses(waveform[late_s:late_e], pulse_thre)
-                after += self._count_pulses(waveform[after_s:after_e], pulse_thre)
-            i += 1
-        print(f'Pre-Pulsing: {pre / spe * 100 : .2f}%')
-        print(f'Late-Pulsing: {late / spe * 100 : .2f}%')
-        print(f'After-Pulsing: {after / spe * 100 : .2f}%')
-
-    def _count_pulses(self, waveform, thre):
-        """
-        Counts pulses in group of waveforms above specified threshold
-
-        Parameters
-        ----------
-            waveform : array
-                Values correpsonding to the waveform
-            thre : float
-                Threshold value above which pulses are counted
-        """
-        count = 0
-        x = np.arange(0, len(waveform) * 4, 4)
-        w = waveform - thre
-        cross = x[1:][w[1:] * w[:-1] < 0]
-        count += len(cross) // 2
-        return count
+    #  def _count_pulses(self, waveform, thre):
+        #  """
+        #  Counts pulses in group of waveforms above specified threshold
+#
+        #  Parameters
+        #  ----------
+            #  waveform : array
+                #  Values correpsonding to the waveform
+            #  thre : float
+                #  Threshold value above which pulses are counted
+        #  """
+        #  count = 0
+        #  x = np.arange(0, len(waveform) * 4, 4)
+        #  w = waveform - thre
+        #  cross = x[1:][w[1:] * w[:-1] < 0]
+        #  count += len(cross) // 2
+        #  return count
 
     def _cut_noise(self, thre):
         """
@@ -413,7 +468,7 @@ class Rooter:
                 try:
                     main_st = idx[0][0]
                     main_en = idx[0][1]
-                except IndexError as i_err:
+                except IndexError:
                     print(f'IndexError on waveform {i}')
                     continue
                 pre = filt_w[i][:main_st - 1] + 15
@@ -426,7 +481,87 @@ class Rooter:
                     to_delete.append(i)
         return np.delete(filt_w, to_delete, axis=0)
 
-    def post_pulse_hist(self, spe_thre, pulse_thre, n_bins=10):
+    def pre_post_pulsing(self, spe_thre, pulse_thre, pre_wind, late_wind, 
+                after_wind):
+        """
+        Calculate the pre-, late-, and after-pulsing percentages
+
+        Parameters
+        ----------
+            spe_thre : int or float
+                Threhold value for single photoelectrons
+            pulse_thre : int or float
+                Threshold value for pre- and post-pulses
+            pre_wind : tuple of ints
+                Start and end of window to count pre-pulses, times in ns
+            late_wind : tuple of ints
+                Start and end of window to count late-pulses, times in ns
+            after_wind : tuple of ints
+                Start and end of window to count after-pulses, times in ns
+        """
+        spe, pre, late, after = self._pulsing(self.w, spe_thre,
+                                              pulse_thre, pre_wind,
+                                              late_wind, after_wind)
+        print(f'Pre-Pulsing: {pre / spe * 100 : .2f}%')
+        print(f'Late-Pulsing: {late / spe * 100 : .2f}%')
+        print(f'After-Pulsing: {after / spe * 100 : .2f}%')
+
+    @staticmethod
+    @njit
+    def _pulsing(waveforms, spe_thre, pulse_thre, pre_wind, late_wind,
+                 after_wind):
+        """
+        Calculate the pre-, late-, and after-pulsing percentages
+
+        Parameters
+        ----------
+            waveforms: 2d array of ints or floats
+                The waveforms to scan through
+            spe_thre : int or float
+                Threhold value for single photoelectrons
+            pulse_thre : int or float
+                Threshold value for pre- and post-pulses
+            pre_wind : tuple of ints
+                Start and end of window to count pre-pulses, times in ns
+            late_wind : tuple of ints
+                Start and end of window to count late-pulses, times in ns
+            after_wind : tuple of ints
+                Start and end of window to count after-pulses, times in ns
+        """
+        spe = 0
+        pre = 0
+        late = 0
+        after = 0
+        for i in range(len(waveforms)):
+            cross = False
+            for j in range(len(waveforms[i])):
+                if not cross and waveforms[i][j] - spe_thre > 0:
+                    cross = True
+                    spe += 1
+                    pre_s = j - pre_wind[1] // 4
+                    pre_e = j - pre_wind[0] // 4
+                    late_s = j + late_wind[0] // 4
+                    late_e = j + late_wind[1] // 4
+                    after_s = j + after_wind[0] // 4
+                    after_e = j + after_wind[1] // 4
+                    pre += _count(waveforms[i], pulse_thre, (pre_s, pre_e))
+                    late += _count(waveforms[i], pulse_thre, (late_s, late_e))
+                    after += _count(waveforms[i], pulse_thre, (after_s, after_e))
+        return spe, pre, late, after
+
+    def view_post_pulse_hist(self, spe_thre, pulse_thre, n_bins=10):
+        """
+        Create a histogram of the timing of after-pulsing
+
+        Parameters
+        ----------
+            spe_thre : int
+                The trigger threshold for the main spe pulse
+            pulse_thre : int
+                The trigger threshold for the after pulses
+            n_bins : int, optional
+                Bin count for histogram
+        """
         hist = np.array([])
         for waveform in self.w:
             x = np.arange(0, len(waveform))
@@ -443,13 +578,12 @@ class Rooter:
             w = w - pulse_thre
             x = (x[st:] - st) * 4
             pulses = x[w > 0]
-            #  pulses = np.delete(pulses, [i for i in range(len(pulses)) if i % 2 != 0])
             if pulses.size != 0:
                 hist = np.append(hist, pulses)
         plt.hist(hist, bins=n_bins, histtype='step')
         plt.xlabel('Time after main pulse [ns]', loc='right')
         plt.ylabel('Counts', loc='top')
-        plt.title('Run ' + self.fi[0:2] + ' ' +'After-Pulsing Time Distribution')
+        plt.title('Run ' + self.fi[-7:-5] + ' ' +'After-Pulsing Time Distribution')
         plt.show()
 
     def view_dark_rate(self, thre_st, thre_en=None, thre_step=10, up_time=5*60):
@@ -473,121 +607,182 @@ class Rooter:
             thres = np.arange(thre_st, thre_en, thre_step)
         else:
             thres = np.array([thre_st])
-        counts = np.zeros_like(thres)
+        counts = self._count_multi_crosses(self.w, thres)
         for i, thre in np.ndenumerate(thres):
-            for j in range(len(self.w)):
-                w = self.w[j] - thre
-                cross = w[1:] * w[:-1] < 0
-                counts[i] += len(w[1:][cross]) // 2
             print(f'For threshold {thre} saw {counts[i]} events for a rate of {counts[i] / up_time :.2f} Hz')
         plt.scatter(thres, counts / up_time)
         plt.xlabel('Threshold [ADC]', loc='right')
         plt.ylabel('Rate [Hz]', loc='top')
-        plt.title(f'Run {self.fi[0:2]} Rate Counts')
+        plt.title(f'Run {self.fi[-7:-5]} Rate Counts')
         plt.show()
+        return thres, counts / up_time
 
-if __name__ == '__main__':
-    #  #  Fit values and initial parameters for run 12
-    #  r1 = Rooter('12.root')
-    #  r1.fit_spectrum((160 * 4, 170 * 4), [deap_ped, spe],
-    #                 [(-200, 200), (0, 900)],
-    #                 [[6.7e4, -20, 25], [9e4, 8.8e2, 8e-2, 1e5, 1.43, 7.14, 2.2e-1, 0.02, 500]],
-    #                 y_log=True, view_wind=(-200, 2000), view=True, convolve=True)
-    #  r1.view_dark_rate(180)
+    @staticmethod
+    @njit
+    def _sum(waveforms):
+        """
+        Sum up a specific window of a 2d array of waveforms for each waveform
 
-    #  #  Fit values and initial parameters for run 10
-    #  r2 = Rooter('10.root', filt=True, thre=187.5)
-    #  r2.fit_spectrum((660, 690), [deap_ped], [(-100, 150)],
-    #                 [[5e5, -70, 20]], y_log=True)
-    #  r2.fit_spectrum((660, 690), [deap_gamma], [(500, 1500)],
-    #                 [[1e5, 200, .25]], y_log=True)
-    #  r2.fit_spectrum((660, 690), [deap_expo], [(0, 300)],
-    #                 [[12.0, 0.02, 500]], y_log=True)
-    #  r2.fit_spectrum((660, 690), [deap_ped, deap_ped], [(-200, 200), (450, 1120)],
-                    #  [[5e5, -70, 20], [1e5, 700, 350]], y_log=True, print_res=True)
+        Parameters
+        ----------
+            waveforms : 2d array
+                This array needs to be already filtered to the range to sum over
 
-    #  #  Classification of waveforms using scikit-learn
-    #  #  use with filtering turned off
-    #  data = r.w
-    #  x_train = data[:10000]
-    #  y_train = []
-    #  for i in range(len(x_train)):
-        #  peak = np.max(x_train[i])
-        #  if peak > thre:
-            #  w = x_train[i] - thre
-            #  cross = w[1:] * w[:-1] < 0
-            #  idx = np.where(cross == True)
-            #  main_st = idx[0][0]
-            #  main_en = idx[0][1]
-            #  pre = x_train[i][:main_st - 1] + 15
-            #  post = x_train[i][main_en + 2:] + 15
-            #  pre_cross = pre[1:][pre[1:] * pre[:-1] < 0]
-            #  post_cross = post[1:][post[1:] * post[:-1] < 0]
-            #  len_pre = len(pre_cross)
-            #  len_post = len(post_cross)
-            #  if len_pre // 2 > 3 or len_post // 2 > 3:
-                #  y_train.append(0)
-            #  else:
-                #  y_train.append(1)
-        #  else:
-            #  y_train.append(2)
-    #  x_test = data[10000:]
-    #  y_test = []
-    #  for i in range(len(x_test)):
-        #  peak = np.max(x_test[i])
-        #  if peak > thre:
-            #  w = x_test[i] - thre
-            #  cross = w[1:] * w[:-1] < 0
-            #  idx = np.where(cross == True)
-            #  main_st = idx[0][0]
-            #  main_en = idx[0][1]
-            #  pre = x_test[i][:main_st - 1] + 15
-            #  post = x_test[i][main_en + 2:] + 15
-            #  pre_cross = pre[1:][pre[1:] * pre[:-1] < 0]
-            #  post_cross = post[1:][post[1:] * post[:-1] < 0]
-            #  len_pre = len(pre_cross)
-            #  len_post = len(post_cross)
-            #  if len_pre // 2 > 3 or len_post // 2 > 3:
-                #  y_test.append(0)
-            #  else:
-                #  y_test.append(1)
-        #  else:
-            #  y_test.append(2)
-    #  classifier = RandomForestClassifier()
-    #  model = classifier.fit(x_train, y_train)
-    #  pred = model.predict(x_test)
-    #  print('Random Forest')
-    #  print(' accuracy = ', accuracy_score(y_test, pred))
-    #  print(confusion_matrix(y_test, pred))
-    #  classifier = gbc()
-    #  model = classifier.fit(x_train, y_train)
-    #  pred = model.predict(x_test)
-    #  print('Gradient Boosting')
-    #  print(' accuracy = ', accuracy_score(y_test, pred))
-    #  print(confusion_matrix(y_test, pred))
-    r1 = Rooter('./summer_2021_data/01.adaq.root')
-    r2 = Rooter('./summer_2021_data/02.adaq.root')
-    r3 = Rooter('./summer_2021_data/03.adaq.root')
-    r4 = Rooter('./summer_2021_data/04.adaq.root')
-    r5 = Rooter('./summer_2021_data/05.adaq.root')
-    r6 = Rooter('./summer_2021_data/06.adaq.root')
-    r7 = Rooter('./summer_2021_data/07.adaq.root')
-    r8 = Rooter('./summer_2021_data/08.adaq.root')
-    r9 = Rooter('./summer_2021_data/09.adaq.root')
-    r10 = Rooter('./summer_2021_data/10.adaq.root')
-    r11 = Rooter('./summer_2021_data/11.adaq.root')
-    r12 = Rooter('./summer_2021_data/12.adaq.root')
+        Returns
+        -------
+            spec : array
+                The sum over the window for each waveform in waveforms
+        """
+        spec = np.zeros(len(waveforms))
+        for i in range(len(waveforms)):
+            total = 0
+            for j in range(len(waveforms[i])):
+                total += waveforms[i][j]
+            spec[i] += total
+        return spec
 
-    for i in range(5):
-        r1.view_waveform(i)
-        r2.view_waveform(i)
-        r3.view_waveform(i)
-        r4.view_waveform(i)
-        r5.view_waveform(i)
-        r6.view_waveform(i)
-        r7.view_waveform(i)
-        r8.view_waveform(i)
-        r9.view_waveform(i)
-        r10.view_waveform(i)
-        r11.view_waveform(i)
-        r12.view_waveform(i)
+    @staticmethod
+    @njit
+    def _find_max(waveforms):
+        """
+        Find the maximum of a 2d array of waveforms for each waveform
+
+        Parameters
+        ----------
+            waveforms : 2d array
+                This array needs to be already filtered to the range to sum over
+
+        Returns
+        -------
+            max_w : array
+                The maximum value for each waveform in waveforms
+        """
+        max_w = np.zeros(len(waveforms))
+        for i in range(len(waveforms)):
+            max_temp = -np.inf
+            for j in range(len(waveforms[i])):
+                if waveforms[i][j] > max_temp:
+                    max_temp = waveforms[i][j]
+            max_w[i] = max_temp
+        return max_w
+
+    @staticmethod
+    @njit
+    def _count_multi_crosses(w, thres):
+        """
+        Count the crossings of a certain threshold for multiple
+        waveforms
+
+        Parameters
+        ----------
+            w : 2d array
+                Waveforms to find the crossings of
+            thres : array of ints or floats
+                List of thresholds to find the crossings above
+
+        Returns
+        -------
+            counts : array of ints
+                Number of crossings above threshold in 2d 
+                array of waveforms
+        """
+        counts = np.zeros_like(thres)
+        for i in range(len(counts)):
+            counts[i] += _count_crosses(w, thres[i])
+        return counts
+
+#%% main analysis
+#  #  Fit values and initial parameters for run 12
+#  r1 = Rooter('12.root')
+#  r1.fit_spectrum((160 * 4, 170 * 4), [deap_ped, spe],
+#                [(-200, 200), (0, 900)],
+#                [[6.7e4, -20, 25], [9e4, 8.8e2, 8e-2, 1e5, 1.43, 7.14, 2.2e-1, 0.02, 500]],
+#                y_log=True, view_wind=(-200, 2000), view=True, convolve=True)
+#  r1.view_dark_rate(180, 260)
+#
+#  Fit values and initial parameters for run 10
+#  r2 = Rooter('10.root', filt=True, thre=187.5)
+#  r2.fit_spectrum((660, 690), [deap_ped], [(-100, 150)],
+#                [[5e5, -70, 20]], y_log=True)
+#  r2.fit_spectrum((660, 690), [deap_gamma], [(500, 1500)],
+#                 [[1e5, 200, .25]], y_log=True)
+#  r2.fit_spectrum((660, 690), [deap_expo], [(0, 300)],
+#                [[12.0, 0.02, 500]], y_log=True)
+#  r2.fit_spectrum((660, 690), [deap_ped, deap_ped], [(-200, 200), (450, 1120)],
+#                 [[5e5, -70, 20], [1e5, 700, 350]], y_log=True, print_res=True)
+
+#%% get data
+r12 = Rooter('./data/12.root')
+#  r21 = Rooter('./data/21.root')
+#  r23 = Rooter('./data/23.root')
+#  r23.view_spectrum(wind=(650, 690), view_wind=(-20, 60))
+#  r23.view_dark_rate(5, 55, 5)
+
+#%% pre- and post-pulsing
+#  r21.pre_post_pulsing(6, 2, (10, 90), (25, 150), (150, 25000))
+r12.pre_post_pulsing(380 / 2, 380 * 0.3 / 2, (10, 90), (25, 150), (150, 25000))
+
+#%% dark rates
+#  r23.view_dark_rate(5, 55, thre_step=5)
+
+#%% machine learning classification
+# # Classification of waveforms using scikit-learn
+# # use with filtering turned off
+# data = r.w
+# x_train = data[:10000]
+# y_train = []
+# for i in range(len(x_train)):
+#     peak = np.max(x_train[i])
+#     if peak > thre:
+#         w = x_train[i] - thre
+#         cross = w[1:] * w[:-1] < 0
+#         idx = np.where(cross == True)
+#         main_st = idx[0][0]
+#         main_en = idx[0][1]
+#         pre = x_train[i][:main_st - 1] + 15
+#         post = x_train[i][main_en + 2:] + 15
+#         pre_cross = pre[1:][pre[1:] * pre[:-1] < 0]
+#         post_cross = post[1:][post[1:] * post[:-1] < 0]
+#         len_pre = len(pre_cross)
+#         len_post = len(post_cross)
+#         if len_pre // 2 > 3 or len_post // 2 > 3:
+#             y_train.append(0)
+#         else:
+#             y_train.append(1)
+#     else:
+#         y_train.append(2)
+# x_test = data[10000:]
+# y_test = []
+# for i in range(len(x_test)):
+#     peak = np.max(x_test[i])
+#     if peak > thre:
+#         w = x_test[i] - thre
+#         cross = w[1:] * w[:-1] < 0
+#         idx = np.where(cross == True)
+#         main_st = idx[0][0]
+#         main_en = idx[0][1]
+#         pre = x_test[i][:main_st - 1] + 15
+#         post = x_test[i][main_en + 2:] + 15
+#         pre_cross = pre[1:][pre[1:] * pre[:-1] < 0]
+#         post_cross = post[1:][post[1:] * post[:-1] < 0]
+#         len_pre = len(pre_cross)
+#         len_post = len(post_cross)
+#         if len_pre // 2 > 3 or len_post // 2 > 3:
+#             y_test.append(0)
+#         else:
+#             y_test.append(1)
+#     else:
+#         y_test.append(2)
+# classifier = RandomForestClassifier()
+# model = classifier.fit(x_train, y_train)
+# pred = model.predict(x_test)
+# print('Random Forest')
+# print(' accuracy = ', accuracy_score(y_test, pred))
+# print(confusion_matrix(y_test, pred))
+# classifier = gbc()
+# model = classifier.fit(x_train, y_train)
+# pred = model.predict(x_test)
+# print('Gradient Boosting')
+# print(' accuracy = ', accuracy_score(y_test, pred))
+# print(confusion_matrix(y_test, pred))
+
