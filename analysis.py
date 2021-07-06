@@ -1,12 +1,9 @@
-#!/usr/bin/env python
-# -*- coding: utf-8 -*-
-
 #%% imports
+import copy
 import numpy as np
 import matplotlib.pyplot as plt
 import awkward as ak
 import uproot
-import copy
 
 from scipy.optimize import curve_fit
 from numba import njit
@@ -111,7 +108,7 @@ class Rooter:
                 Logscale for y-axis
         """
         hist = _find_max(self.w)
-        plt.hist(hist[(hist1 > view_wind[0]) * (hist < view_wind[1])],
+        plt.hist(hist[(hist > view_wind[0]) * (hist < view_wind[1])],
                  bins=n_bins, histtype='step')
         plt.xlabel('ADC', loc='right')
         plt.ylabel('Count', loc='top')
@@ -172,7 +169,8 @@ class Rooter:
         print(f'{np.average(charge):.2e}')
 
 
-    def view_multi_spec(self, winds, n_bins=150, view_wind=(-200, 4000)):
+    def view_multi_spec(self, winds, n_bins=150, view_wind=(-200, 4000),
+                        y_log=False):
         """
         Plot multiple spectrum histograms of the integrated waveforms
 
@@ -186,13 +184,18 @@ class Rooter:
                 Viewing window for histogram
         """
         for wind in winds:
-            spec = _sum(self.w[:, wind[0]:wind[1] + 1])
+            int_st, int_en = wind
+            i_st = int_st // 4 # convert ns to index
+            i_en = int_en // 4 # convert ns to index
+            spec = _sum(self.w[:, i_st:i_en + 1])
             plt.hist(spec[(spec > view_wind[0]) * (spec < view_wind[1])],
-                     bins=n_bins, histtype='step', label='Int. wind. ' + str(wind[0] * 4)
-                                                         + '-' + str(wind[1] * 4))
+                     bins=n_bins, histtype='step', label='Int. wind. ' + str(int_st)
+                                                         + '-' + str(int_en))
         plt.xlabel('Integrated ADC', loc='right')
         plt.ylabel('Count', loc='top')
         plt.title('Run ' + self.fi[-7:-5] + ' Spectrum')
+        if y_log:
+            plt.yscale('log')
         plt.legend()
         plt.show()
 
@@ -522,14 +525,35 @@ if __name__ == '__main__':
     #%% get data
     # r12 = Rooter('./data/12.root')
     # r21 = Rooter('./data/21.root')
-    r23 = Rooter('./data/23.root')
+    # r23 = Rooter('./data/23.root')
+    # r24 = Rooter('./data/24.root')
+    # r25 = Rooter('./data/25.root')
+    # r26 = Rooter('./data/26.root')
+    # r27 = Rooter('./data/27.root')
+    r28 = Rooter('./data/28.root')
+    r29 = Rooter('./data/29.root')
+
+    # r24.view_spectrum((650, 680), 50, (-20, 120), True)
+    # r24.fit_spectrum((650, 680), [deap_ped, deap_ped], [(-20, 20), (20, 60)],
+    #                  [(5e5, 5, 10), (300, 40, 10)], n_bins=52, view_wind=(-20, 120),
+    #                  y_log=True, print_res=True, text_loc=(20, 650))
+    # r26.view_spectrum((650, 680), 50, (-20, 120), True)
+    # r26.fit_spectrum((650, 680), [deap_ped, deap_ped], [(-20, 20), (20, 60)],
+    #                  [(5e5, 5, 10), (300, 40, 10)], n_bins=52, view_wind=(-20, 120),
+    #                  y_log=True, print_res=True, text_loc=(20, 650))
+    # r27.view_spectrum((650, 680), 50, y_log=True)
+    # r27.fit_spectrum((650, 680), [deap_ped], [(50, 500)],
+    #                  [(5e5, 200, 70)], n_bins=52, y_log=True, print_res=True,
+    #                  text_loc=(300, 5))
+    r28.pre_post_pulsing(6, 3, (10, 90), (25, 150), (150, 25000))
+    r29.pre_post_pulsing(6, 3, (10, 90), (25, 150), (150, 25000))
 
     #%% pre- and post-pulsing
     #  r21.pre_post_pulsing(6, 2, (10, 90), (25, 150), (150, 25000))
     #  r12.pre_post_pulsing(200, 200 * 0.3, (10, 90), (25, 150), (150, 25000))
 
     #%% dark rates
-    thres, rates = r23.view_dark_rate(5, 55, thre_step=5)
+    # thres, rates = r23.view_dark_rate(5, 55, thre_step=5)
 
     #%% machine learning classification
     # # Classification of waveforms using scikit-learn
