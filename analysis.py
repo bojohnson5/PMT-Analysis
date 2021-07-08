@@ -16,6 +16,8 @@ from helper_funcs import _count_crosses, _count_crosses_single, _count, \
 # from sklearn.metrics import accuracy_score
 # from sklearn.metrics import confusion_matrix
 
+# plt.style.use(['science', 'grid'])
+
 #%% Rooter class
 class Rooter:
     """
@@ -257,10 +259,23 @@ class Rooter:
         if print_res:
             if fit_num != 1:
                 adj_mean = params[1][1] - params[0][1]
-                res = adj_mean / params[1][2]
+                res = params[1][2] / adj_mean
+                max_i = np.argmax(hist)
+                valley_i = self._find_valley(hist[max_i:])
+                valley_i = max_i + valley_i
+                peak_i = np.argmax(hist[valley_i:])
+                peak_i = valley_i + peak_i
+                min_i = np.argmin(hist[max_i:peak_i])
+                min_i = max_i + min_i
+                pv = hist[peak_i] / hist[min_i]
+                zeros = np.sum(hist[:min_i])
+                ones = np.sum(hist[min_i:])
+                per_0pe = zeros / (zeros + ones)
+                to_show = f'Ped. sig.: {params[0][2]:.2f}\nP/V: {pv:.2f}\nRes: {res:.2f}\nSPE peak: {adj_mean:.2f}\n 0-PE: {per_0pe * 100:.0f}%'
             else:
                 adj_mean = params[0][1]
-                res = adj_mean / params[0][2]
+                res = params[0][2] / adj_mean
+                to_show = f'Res: {res:.2f}'
             max_i = np.argmax(hist)
             valley_i = self._find_valley(hist[max_i:])
             valley_i = max_i + valley_i
@@ -273,10 +288,7 @@ class Rooter:
             ones = np.sum(hist[min_i:])
             per_0pe = zeros / (zeros + ones)
             plt.text(text_loc[0], text_loc[1],
-                                 f'Ped. sig: {params[0][2]:.2f}\n'
-                                 f'P/V: {pv:.2f}\nRes: '
-                                 f'{res:.2f}\nSPE Peak: {adj_mean:.2f}\n'
-                                 f'0-PE: {per_0pe * 100:.0f}%')
+                                 to_show)
         if y_log:
             plt.yscale('log')
         if view:
@@ -527,7 +539,7 @@ if __name__ == '__main__':
     # r21 = Rooter('./data/21.root')
     # r23 = Rooter('./data/23.root')
     # r24 = Rooter('./data/24.root')
-    # r25 = Rooter('./data/25.root')
+    # r25 = Rooter('./data/25.root') # Nothing useful in this file
     # r26 = Rooter('./data/26.root')
     # r27 = Rooter('./data/27.root')
     r28 = Rooter('./data/28.root')
@@ -537,81 +549,17 @@ if __name__ == '__main__':
     # r24.fit_spectrum((650, 680), [deap_ped, deap_ped], [(-20, 20), (20, 60)],
     #                  [(5e5, 5, 10), (300, 40, 10)], n_bins=52, view_wind=(-20, 120),
     #                  y_log=True, print_res=True, text_loc=(20, 650))
+    # r24.view_max_amplitudes(50, (0, 100), True)
+    # r24.pre_post_pulsing(7, 3.5, (10, 90), (25, 150), (150, 25000))
     # r26.view_spectrum((650, 680), 50, (-20, 120), True)
     # r26.fit_spectrum((650, 680), [deap_ped, deap_ped], [(-20, 20), (20, 60)],
     #                  [(5e5, 5, 10), (300, 40, 10)], n_bins=52, view_wind=(-20, 120),
-    #                  y_log=True, print_res=True, text_loc=(20, 650))
+    #                  y_log=True, print_res=True, text_loc=(20, 2000))
+    # r26.view_max_amplitudes(50, (0, 100), True)
+    # r26.pre_post_pulsing(7, 3.5, (10, 90), (25, 150), (150, 25000))
     # r27.view_spectrum((650, 680), 50, y_log=True)
     # r27.fit_spectrum((650, 680), [deap_ped], [(50, 500)],
     #                  [(5e5, 200, 70)], n_bins=52, y_log=True, print_res=True,
     #                  text_loc=(300, 5))
-    r28.pre_post_pulsing(6, 3, (10, 90), (25, 150), (150, 25000))
-    r29.pre_post_pulsing(6, 3, (10, 90), (25, 150), (150, 25000))
-
-    #%% pre- and post-pulsing
-    #  r21.pre_post_pulsing(6, 2, (10, 90), (25, 150), (150, 25000))
-    #  r12.pre_post_pulsing(200, 200 * 0.3, (10, 90), (25, 150), (150, 25000))
-
-    #%% dark rates
-    # thres, rates = r23.view_dark_rate(5, 55, thre_step=5)
-
-    #%% machine learning classification
-    # # Classification of waveforms using scikit-learn
-    # # use with filtering turned off
-    # data = r.w
-    # x_train = data[:10000]
-    # y_train = []
-    # for i in range(len(x_train)):
-    #     peak = np.max(x_train[i])
-    #     if peak > thre:
-    #         w = x_train[i] - thre
-    #         cross = w[1:] * w[:-1] < 0
-    #         idx = np.where(cross == True)
-    #         main_st = idx[0][0]
-    #         main_en = idx[0][1]
-    #         pre = x_train[i][:main_st - 1] + 15
-    #         post = x_train[i][main_en + 2:] + 15
-    #         pre_cross = pre[1:][pre[1:] * pre[:-1] < 0]
-    #         post_cross = post[1:][post[1:] * post[:-1] < 0]
-    #         len_pre = len(pre_cross)
-    #         len_post = len(post_cross)
-    #         if len_pre // 2 > 3 or len_post // 2 > 3:
-    #             y_train.append(0)
-    #         else:
-    #             y_train.append(1)
-    #     else:
-    #         y_train.append(2)
-    # x_test = data[10000:]
-    # y_test = []
-    # for i in range(len(x_test)):
-    #     peak = np.max(x_test[i])
-    #     if peak > thre:
-    #         w = x_test[i] - thre
-    #         cross = w[1:] * w[:-1] < 0
-    #         idx = np.where(cross == True)
-    #         main_st = idx[0][0]
-    #         main_en = idx[0][1]
-    #         pre = x_test[i][:main_st - 1] + 15
-    #         post = x_test[i][main_en + 2:] + 15
-    #         pre_cross = pre[1:][pre[1:] * pre[:-1] < 0]
-    #         post_cross = post[1:][post[1:] * post[:-1] < 0]
-    #         len_pre = len(pre_cross)
-    #         len_post = len(post_cross)
-    #         if len_pre // 2 > 3 or len_post // 2 > 3:
-    #             y_test.append(0)
-    #         else:
-    #             y_test.append(1)
-    #     else:
-    #         y_test.append(2)
-    # classifier = RandomForestClassifier()
-    # model = classifier.fit(x_train, y_train)
-    # pred = model.predict(x_test)
-    # print('Random Forest')
-    # print(' accuracy = ', accuracy_score(y_test, pred))
-    # print(confusion_matrix(y_test, pred))
-    # classifier = gbc()
-    # model = classifier.fit(x_train, y_train)
-    # pred = model.predict(x_test)
-    # print('Gradient Boosting')
-    # print(' accuracy = ', accuracy_score(y_test, pred))
-    # print(confusion_matrix(y_test, pred))
+    r28.view_dark_rate(5, 55, 5, 10*60)
+    r29.view_dark_rate(5, 55, 5, 10*60)
