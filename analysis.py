@@ -1,4 +1,3 @@
-#%% imports
 import copy
 import numpy as np
 import matplotlib.pyplot as plt
@@ -6,19 +5,11 @@ import awkward as ak
 import uproot
 
 from scipy.optimize import curve_fit
-from numba import njit
 from fit_funcs import deap_expo, deap_gamma, deap_ped, spe, ped_spe
 from helper_funcs import _count_crosses, _count_crosses_single, _count, \
     _count_multi_crosses, _sum, _find_max, _pulsing
 
-# from sklearn.ensemble import RandomForestClassifier
-# from sklearn.ensemble import GradientBoostingClassifier as gbc
-# from sklearn.metrics import accuracy_score
-# from sklearn.metrics import confusion_matrix
 
-# plt.style.use(['science', 'grid'])
-
-#%% Rooter class
 class Rooter:
     """
     A class to do the analysis of a ROOT file and associated waveforms
@@ -203,6 +194,82 @@ class Rooter:
 
 
     def fit_spectrum(self, wind, funcs, bounds, p0s, n_bins=150,
+                     fit_wind=(-200, 4000)):
+        """
+        Fit a spectrum with a given function(s) over a specified range(s)
+
+        Parameters
+        ----------
+            wind : tuple of ints
+                Where to stop and start the integration window, as indicies not times
+            funcs : list of functions
+                Functions that will be fitted over specified range
+            bounds : list of tuples
+                Range where the associated function should be fitted to
+            p0s: list of lists
+                Initial paramter guesses for fits
+            n_bins : int, optional
+                Number of histogram bins
+            fit_wind : tuple of ints, optional
+                Fit window for histogram
+            y_log : bool, optional
+                If y axis should be log
+            print_res : bool, optional
+                Print calculation results on figure
+            view : bool, optional
+                Plot the fits and histogram
+            convolve : bool, optional
+                Convolve fits and plot them
+        """
+        int_st, int_en = wind
+        i_st = int_st // 4 # convert ns to index
+        i_en = int_en // 4 # convert ns to index
+        spec = _sum(self.w[:, i_st:i_en + 1])
+        spec = spec[(spec > fit_wind[0]) * (spec < fit_wind[1])]
+        hist, bin_b = np.histogram(spec, bins=n_bins)
+        bin_w = np.diff(bin_b)
+        bin_c = bin_b[:-1] + bin_w / 2
+
+        fit_num = 0
+        params = []
+        x = np.linspace(fit_wind[0], fit_wind[1], 1000)
+        ys = []
+        for func, bound, p0 in zip(funcs, bounds, p0s):
+            fit_num += 1
+            x_fit = bin_c[(bin_c > bound[0]) * (bin_c < bound[1])]
+            y_fit = hist[(bin_c > bound[0]) * (bin_c < bound[1])]
+            popt, _ = curve_fit(func, x_fit, y_fit, p0=p0)
+            params.append(popt)
+            y = func(x, *popt)
+            ys.append(y)
+        if fit_num != 1:
+            adj_mean = params[1][1] - params[0][1]
+            res = params[1][2] / adj_mean
+            max_i = np.argmax(hist)
+            valley_i = self._find_valley(hist[max_i:])
+            valley_i = max_i + valley_i
+            peak_i = np.argmax(hist[valley_i:])
+            peak_i = valley_i + peak_i
+            min_i = np.argmin(hist[max_i:peak_i])
+            min_i = max_i + min_i
+            pv = hist[peak_i] / hist[min_i]
+            zeros = np.sum(hist[:min_i])
+            ones = np.sum(hist[min_i:])
+            per_0pe = zeros / (zeros + ones)
+            print(f'Ped. sig.: {params[0][2]:.2f}')
+            print(f'P/V: {pv:.2f}')
+            print(f'Res.: {res * 100:.0f}%')
+            print(f'SPE peak: {adj_mean:.2f}')
+            print(f'0-PE: {per_0pe * 100:.0f}')
+        else:
+            adj_mean = params[0][1]
+            res = params[0][2] / adj_mean
+            print(f'Res.: {res * 100:.0f}')
+        print(f'# of events: {len(self.w)}')
+        print(params)
+
+
+    def view_fit_spectrum(self, wind, funcs, bounds, p0s, n_bins=150,
                      view_wind=(-200, 4000), y_log=False,
                      print_res=False, view=True, convolve=False,
                      text_loc=(500, 1500)):
@@ -513,11 +580,45 @@ class Rooter:
         return thres, counts / up_time
 
 
+    def dark_rate(self, thre_st, thre_en=None, thre_step=10, up_time=5*60):
+        """
+        Count the number of pulses above a certain threshold and determine the corresponding
+        rate
+
+        Parameters
+        ----------
+            thre_st : int
+                The threshold value to find the rate at, or the beginning threshold value
+                in a range of values
+            thre_en : int, optional
+                If given, the ending threshold value to find the rate at
+            thre_step : int, optional
+                The step value between beginning and ending threshold
+            up_time : float, optional
+                The runtime of the data set in seconds
+
+        Returns
+        -------
+            thres : array of ints or floats
+                The array holding threshold values for counting pulses
+            counts / up_time : array of floats
+                The array holding the rates (in Hz) of pulses above
+                the threshold specified by thres
+        """
+        if thre_en is not None:
+            thres = np.arange(thre_st, thre_en, thre_step)
+        else:
+            thres = np.array([thre_st])
+        counts = _count_multi_crosses(self.w, thres)
+        for i, thre in np.ndenumerate(thres):
+            print(f'For threshold {thre} saw {counts[i]} events for a rate of {counts[i] / up_time :.2f} Hz')
+        return thres, counts / up_time
+
+
 if __name__ == '__main__':
-    #%% main analysis
     # #  Fit values and initial parameters for run 12
     # r1 = Rooter('12.root')
-    # r1.fit_spectrum((160 * 4, 170 * 4), [deap_ped, spe],
+    # r1.view_fit_spectrum((160 * 4, 170 * 4), [deap_ped, spe],
     #               [(-200, 200), (0, 900)],
     #               [[6.7e4, -20, 25], [9e4, 8.8e2, 8e-2, 1e5, 1.43, 7.14, 2.2e-1, 0.02, 500]],
     #               y_log=True, view_wind=(-200, 2000), view=True, convolve=True)
@@ -525,41 +626,42 @@ if __name__ == '__main__':
     #
     # Fit values and initial parameters for run 10
     # r2 = Rooter('10.root', filt=True, thre=187.5)
-    # r2.fit_spectrum((660, 690), [deap_ped], [(-100, 150)],
+    # r2.view_fit_spectrum((660, 690), [deap_ped], [(-100, 150)],
     #               [[5e5, -70, 20]], y_log=True)
-    # r2.fit_spectrum((660, 690), [deap_gamma], [(500, 1500)],
+    # r2.view_fit_spectrum((660, 690), [deap_gamma], [(500, 1500)],
     #                [[1e5, 200, .25]], y_log=True)
-    # r2.fit_spectrum((660, 690), [deap_expo], [(0, 300)],
+    # r2.view_fit_spectrum((660, 690), [deap_expo], [(0, 300)],
     #               [[12.0, 0.02, 500]], y_log=True)
-    # r2.fit_spectrum((660, 690), [deap_ped, deap_ped], [(-200, 200), (450, 1120)],
+    # r2.view_fit_spectrum((660, 690), [deap_ped, deap_ped], [(-200, 200), (450, 1120)],
     #                [[5e5, -70, 20], [1e5, 700, 350]], y_log=True, print_res=True)
 
-    #%% get data
     # r12 = Rooter('./data/12.root')
     # r21 = Rooter('./data/21.root')
     # r23 = Rooter('./data/23.root')
-    # r24 = Rooter('./data/24.root')
+    r24 = Rooter('./data/24.root')
     # r25 = Rooter('./data/25.root') # Nothing useful in this file
     # r26 = Rooter('./data/26.root')
     # r27 = Rooter('./data/27.root')
-    r28 = Rooter('./data/28.root')
-    r29 = Rooter('./data/29.root')
+    # r28 = Rooter('./data/28.root')
+    # r29 = Rooter('./data/29.root')
 
     # r24.view_spectrum((650, 680), 50, (-20, 120), True)
-    # r24.fit_spectrum((650, 680), [deap_ped, deap_ped], [(-20, 20), (20, 60)],
+    # r24.view_fit_spectrum((650, 680), [deap_ped, deap_ped], [(-20, 20), (20, 60)],
     #                  [(5e5, 5, 10), (300, 40, 10)], n_bins=52, view_wind=(-20, 120),
     #                  y_log=True, print_res=True, text_loc=(20, 650))
     # r24.view_max_amplitudes(50, (0, 100), True)
+    r24.fit_spectrum((650, 680), [deap_ped, deap_ped], [(-20, 20), (20, 60)],
+                     [(5e5, 5, 10), (300, 40, 10)], n_bins=52, fit_wind=(-20, 120))
     # r24.pre_post_pulsing(7, 3.5, (10, 90), (25, 150), (150, 25000))
     # r26.view_spectrum((650, 680), 50, (-20, 120), True)
-    # r26.fit_spectrum((650, 680), [deap_ped, deap_ped], [(-20, 20), (20, 60)],
+    # r26.view_fit_spectrum((650, 680), [deap_ped, deap_ped], [(-20, 20), (20, 60)],
     #                  [(5e5, 5, 10), (300, 40, 10)], n_bins=52, view_wind=(-20, 120),
     #                  y_log=True, print_res=True, text_loc=(20, 2000))
     # r26.view_max_amplitudes(50, (0, 100), True)
     # r26.pre_post_pulsing(7, 3.5, (10, 90), (25, 150), (150, 25000))
     # r27.view_spectrum((650, 680), 50, y_log=True)
-    # r27.fit_spectrum((650, 680), [deap_ped], [(50, 500)],
+    # r27.view_fit_spectrum((650, 680), [deap_ped], [(50, 500)],
     #                  [(5e5, 200, 70)], n_bins=52, y_log=True, print_res=True,
     #                  text_loc=(300, 5))
-    r28.view_dark_rate(5, 55, 5, 10*60)
-    r29.view_dark_rate(5, 55, 5, 10*60)
+    # r28.view_dark_rate(5, 55, 5, 10*60)
+    # r29.view_dark_rate(5, 55, 5, 10*60)
