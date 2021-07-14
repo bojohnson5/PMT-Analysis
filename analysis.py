@@ -242,6 +242,8 @@ class Rooter:
             params.append(popt)
             y = func(x, *popt)
             ys.append(y)
+        print(f'Run {self.fi} Results')
+        print(f'# of events: {len(self.w)}')
         if fit_num != 1:
             adj_mean = params[1][1] - params[0][1]
             res = params[1][2] / adj_mean
@@ -252,6 +254,8 @@ class Rooter:
             peak_i = valley_i + peak_i
             min_i = np.argmin(hist[max_i:peak_i])
             min_i = max_i + min_i
+            print(hist[peak_i])
+            print(hist[min_i])
             pv = hist[peak_i] / hist[min_i]
             zeros = np.sum(hist[:min_i])
             ones = np.sum(hist[min_i:])
@@ -260,12 +264,11 @@ class Rooter:
             print(f'P/V: {pv:.2f}')
             print(f'Res.: {res * 100:.0f}%')
             print(f'SPE peak: {adj_mean:.2f}')
-            print(f'0-PE: {per_0pe * 100:.0f}')
+            print(f'0-PE: {per_0pe * 100:.0f}%')
         else:
             adj_mean = params[0][1]
             res = params[0][2] / adj_mean
-            print(f'Res.: {res * 100:.0f}')
-        print(f'# of events: {len(self.w)}')
+            print(f'Res.: {res * 100:.0f}%')
         print(params)
 
 
@@ -635,33 +638,34 @@ if __name__ == '__main__':
     # r2.view_fit_spectrum((660, 690), [deap_ped, deap_ped], [(-200, 200), (450, 1120)],
     #                [[5e5, -70, 20], [1e5, 700, 350]], y_log=True, print_res=True)
 
-    # r12 = Rooter('./data/12.root')
-    # r21 = Rooter('./data/21.root')
-    # r23 = Rooter('./data/23.root')
-    r24 = Rooter('./data/24.root')
-    # r25 = Rooter('./data/25.root') # Nothing useful in this file
-    # r26 = Rooter('./data/26.root')
-    # r27 = Rooter('./data/27.root')
-    # r28 = Rooter('./data/28.root')
-    # r29 = Rooter('./data/29.root')
 
-    # r24.view_spectrum((650, 680), 50, (-20, 120), True)
-    # r24.view_fit_spectrum((650, 680), [deap_ped, deap_ped], [(-20, 20), (20, 60)],
-    #                  [(5e5, 5, 10), (300, 40, 10)], n_bins=52, view_wind=(-20, 120),
-    #                  y_log=True, print_res=True, text_loc=(20, 650))
-    # r24.view_max_amplitudes(50, (0, 100), True)
-    r24.fit_spectrum((650, 680), [deap_ped, deap_ped], [(-20, 20), (20, 60)],
-                     [(5e5, 5, 10), (300, 40, 10)], n_bins=52, fit_wind=(-20, 120))
-    # r24.pre_post_pulsing(7, 3.5, (10, 90), (25, 150), (150, 25000))
-    # r26.view_spectrum((650, 680), 50, (-20, 120), True)
-    # r26.view_fit_spectrum((650, 680), [deap_ped, deap_ped], [(-20, 20), (20, 60)],
-    #                  [(5e5, 5, 10), (300, 40, 10)], n_bins=52, view_wind=(-20, 120),
-    #                  y_log=True, print_res=True, text_loc=(20, 2000))
-    # r26.view_max_amplitudes(50, (0, 100), True)
-    # r26.pre_post_pulsing(7, 3.5, (10, 90), (25, 150), (150, 25000))
-    # r27.view_spectrum((650, 680), 50, y_log=True)
-    # r27.view_fit_spectrum((650, 680), [deap_ped], [(50, 500)],
-    #                  [(5e5, 200, 70)], n_bins=52, y_log=True, print_res=True,
-    #                  text_loc=(300, 5))
-    # r28.view_dark_rate(5, 55, 5, 10*60)
-    # r29.view_dark_rate(5, 55, 5, 10*60)
+    # For 1.38 V LED
+    r30 = Rooter('./data/30.root')
+    r30.fit_spectrum((650, 680), [deap_ped, deap_ped], [(-20, 20), (20, 60)],
+                     [(5e5, 5, 10), (300, 40, 10)], 52, (-20, 120))
+    r30.pre_post_pulsing(7, 3.5, (10, 90), (25, 150), (150, 25000))
+    print()
+    del r30
+
+    # # For 1.37 V LED
+    # r31 = Rooter('./data/31.root')
+    # r31.fit_spectrum((650, 680), [deap_ped, deap_ped], [(-20, 20), (20, 60)],
+    #                  [(5e5, 5, 10), (300, 40, 10)], 52, (-20, 120))
+    # r31.pre_post_pulsing(7, 3.5, (10, 90), (25, 150), (150, 25000))
+    # print()
+    # del r31
+
+    # # For 1.40 V LED
+    # r32 = Rooter('./data/32.root')
+    # r32.fit_spectrum((650, 680), [deap_ped, deap_ped], [(-20, 20), (20, 60)],
+    #                  [(5e5, 5, 10), (300, 40, 10)], 52, (-20, 120))
+    # r32.pre_post_pulsing(7, 3.5, (10, 90), (25, 150), (150, 25000))
+    # print()
+    # del r32
+
+    # # For 1.51 V LED
+    # r33 = Rooter('./data/33.root')
+    # r33.fit_spectrum((650, 680), [deap_ped], [(50, 500)],
+    #                  [(5e5, 200, 70)], n_bins=52)
+    # print()
+    # del r33

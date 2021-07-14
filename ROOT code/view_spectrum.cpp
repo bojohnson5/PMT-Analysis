@@ -1,6 +1,7 @@
 void view_spectrum(string file, Int_t st = 0,
 				   Int_t en = 0, Bool_t save_file = false,
-				   Int_t num_bins = 150) {
+                   Int_t num_bins = 150, Int_t view_low = -100,
+                   Int_t view_high = 300, Bool_t log = true) {
 	TFile* f = new TFile(file.c_str());
 	TTree* t = (TTree*)f->Get("waveformTree");
 
@@ -33,8 +34,13 @@ void view_spectrum(string file, Int_t st = 0,
 	Double_t up_time = waveform->size() * 4.0 * num_ent;
 	up_time /= 1e9;
 
+  if (log) {
+    auto c = new TCanvas("c", "c", 600, 600);
+    c->SetLogy();
+  }
+
 	TH1D* hist = new TH1D("hist", ss.str().c_str(),
-				num_bins, -1000, 3000);
+				num_bins, view_low, view_high);
   hist->GetXaxis()->SetTitle("Integrated ADC");
   hist->GetYaxis()->SetTitle("Counts");
 

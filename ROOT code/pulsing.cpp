@@ -25,7 +25,7 @@ void pulsing(string file, double thre, int wind_st = 0, int wind_en = 0) {
           pulse = true;
           counts++;
         }
-        
+
         if (pulse && adc < thre) {
           pulse = false;
         }
@@ -38,7 +38,7 @@ void pulsing(string file, double thre, int wind_st = 0, int wind_en = 0) {
           pulse = true;
           counts++;
         }
-        
+
         if (pulse && adc < thre) {
           pulse = false;
         }
